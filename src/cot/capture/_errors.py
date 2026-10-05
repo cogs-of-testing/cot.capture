@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import errno
+
 
 class CaptureWarning(UserWarning):
     """Base class of the warnings cot.capture emits."""
@@ -13,11 +15,16 @@ class SlotReplacedWarning(CaptureWarning):
     """A scope ended and its slot held an object it did not put there."""
 
 
-class ProxyExpiredError(ValueError):
-    """A proxy without write-back was used after its scope ended.
+class ProxyExpiredError(OSError, ValueError):
+    """A proxy was used after its scope ended and had nowhere to write back.
 
-    A ``ValueError``, like any other I/O operation on a closed file.
+    An ``OSError`` with ``errno.EBADF``, as for a closed file descriptor, and
+    a ``ValueError``, as for I/O on a closed Python file object, so code that
+    handles either keeps working (like ``io.UnsupportedOperation``).
     """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(errno.EBADF, message)
 
 
 class StdinRefusedError(OSError):

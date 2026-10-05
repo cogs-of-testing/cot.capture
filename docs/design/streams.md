@@ -59,7 +59,8 @@ caller's location. What happens to the data next is chosen per proxy:
   ends at the slot's original object (`sys.__stdout__`). A live proxy of
   another scope is a normal target, so write-back output is captured by
   whichever scope is current.
-- otherwise: **[pending decision](#d2)**.
+- otherwise, or when write-back finds no target: the operation raises
+  `ProxyExpiredError` ([D2](#d2)).
 
 **O4. Foreign replacement is tolerated and reported.** Code under test may put
 its own object in a slot during a scope (Click's `CliRunner`,
@@ -145,9 +146,14 @@ research topic [R1](#r1).
 
 ### D2
 
-**A closed proxy used without write-back:** *pending; asked in the thread.
-Recommended: warn, then raise a `ValueError` subclass naming the
-annotations.*
+**A closed proxy with nowhere to write raises `ProxyExpiredError`,** after the
+warning. It is an `OSError` with `errno.EBADF`, what a closed descriptor
+gives, and a `ValueError`, what a closed Python file object gives, the same
+double base as `io.UnsupportedOperation`. That covers both "write-back was
+not requested" and "write-back found no target".
+
+*Cost:* an exception carrying two meanings; code catching only one still
+works, code distinguishing them by type cannot.
 
 ### D3
 

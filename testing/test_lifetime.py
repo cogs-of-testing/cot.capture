@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import io
 import sys
 
@@ -48,9 +49,22 @@ def test_use_after_lifetime_warns_then_raises() -> None:
     assert record[0].filename == __file__
 
 
-def test_expired_error_is_a_value_error() -> None:
-    """Code that handles closed files keeps working."""
-    assert issubclass(ProxyExpiredError, ValueError)
+def test_expired_error_fits_closed_files_and_descriptors() -> None:
+    """Code that handles a closed file object or a bad descriptor keeps working."""
+    error = ProxyExpiredError("closed")
+    assert isinstance(error, ValueError)
+    assert isinstance(error, OSError)
+    assert error.errno == errno.EBADF
+
+
+def test_write_back_without_a_target_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "__stdout__", None)
+    kept, _ = _misplace(write_back=True, stderr=None)
+    with pytest.warns(ProxyExpiredWarning):
+        with pytest.raises(ProxyExpiredError, match="no write-back target") as info:
+            kept.write("late")
+    assert info.value.errno == errno.EBADF
 
 
 def test_write_back_goes_to_the_current_slot() -> None:
