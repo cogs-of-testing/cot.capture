@@ -14,6 +14,7 @@ from ._errors import (
     ProxyExpiredWarning,
     SlotReplacedWarning,
     StdinRefusedError,
+    TerminalClosedWarning,
 )
 from ._proxy import StreamProxy
 from ._scope import ForeignReplacement, Level, Scope, capture
@@ -33,6 +34,7 @@ __all__ = [
     "SlotReplacedWarning",
     "StdinRefusedError",
     "StreamProxy",
+    "TerminalClosedWarning",
     "TerminalStream",
     "borrow",
     "capture",

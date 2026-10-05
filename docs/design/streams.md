@@ -91,11 +91,13 @@ interpreter.
 own account; write-back (O3) and terminal streams (O9) reach a real stream
 only when the caller writes to them.
 
-**O9. Terminal streams are never captured and never closed.** A tool that
-draws on the terminal while capture runs (pytest's `TerminalWriter`, `rich`,
-live logging, tee) gets a [terminal stream](#terminal-streams) that always
-reaches the uncaptured output, whatever scopes are active, and stays valid
-for the life of the interpreter.
+**O9. Terminal streams are never captured, and are owned by whoever asked.**
+A tool that draws on the terminal while capture runs (pytest's
+`TerminalWriter`, `rich`, live logging, tee) gets a
+[terminal stream](#terminal-streams) that reaches the uncaptured output
+whatever scopes are active. Like a proxy (O1, O2) it is annotated with its
+owner and closed by it, which releases its descriptor, so sessions run one
+after another leak nothing.
 
 ## Proxies
 
@@ -127,25 +129,31 @@ write order, without attribution.
 
 ## Terminal streams
 
-`terminal("stdout")` and `terminal("stderr")` return the interpreter's
-terminal stream for that output, created on first request and the same object
-afterwards.
+`terminal("stdout", owner=...)` and `terminal("stderr", owner=...)` return a
+new terminal stream on every call. The caller owns it and closes it; it is a
+context manager.
 
 - **Backing.** A private `dup` of the *uncaptured* descriptor: if fd 1 is
-  borrowed at the time of the first request, the dup is taken from the
-  bottom borrow's saved copy, otherwise from fd 1 itself. Later borrows
-  redirect fd 1, not the dup, so the stream keeps reaching the terminal.
+  borrowed when the stream is created, the dup is taken from the bottom
+  borrow's saved copy, otherwise from fd 1 itself. Later borrows redirect
+  fd 1, not the dup, so the stream keeps reaching the terminal.
+- **Closing** releases the dup. Every stream holds exactly one, so a session
+  that closes what it obtained leaves the descriptor table as it found it.
+- **After closing**, writes and flushes emit a `TerminalClosedWarning` naming
+  the owner and where the stream was created and closed, then go to the
+  slot's original object (`sys.__stdout__`), so a misplaced reference stays
+  visible without holding a descriptor.
+- **Never closed**: when an open stream is garbage-collected, it emits a
+  `ResourceWarning` and releases its dup, like an unclosed file.
 - **Fallback.** If the descriptor is invalid (no console, closed fd), the
-  stream writes to the slot's original object (`sys.__stdout__`); if that is
-  `None` too, it discards. If a write or flush fails (closed descriptor,
-  broken pipe), the stream records the error in `failure` and discards from
-  then on. Writing never raises.
+  stream writes to `sys.__stdout__`; if that is `None` too, it discards. If a
+  write or flush fails (closed descriptor, broken pipe), the stream records
+  the error in `failure` and discards from then on. Writing never raises.
 - **Attributes.** `fileno()` is the private dup, so `isatty()`, terminal
   size queries and colour detection see the real terminal. `encoding` and
-  `errors` come from `sys.__stdout__`, defaulting to UTF-8.
-- **Lifetime.** `close()` does nothing; the dup is released at interpreter
-  exit. Writes go through unbuffered (`write_through`), so they interleave
-  with captured output in real time.
+  `errors` come from `sys.__stdout__`, defaulting to UTF-8. Writes go
+  through unbuffered (`write_through`), so they interleave with captured
+  output in real time.
 - **Limits.** Whatever redirected fd 1 *before* cot.capture first borrowed it
   (pytest's own capture, a shell redirect) counts as the terminal. A host
   that knows better passes its own stream to its tools instead.
@@ -223,14 +231,17 @@ debugger is the host's job.
 ### D7
 
 **Tools that draw on the terminal get a terminal stream, not the current
-`sys.stdout`** (O9).
+`sys.stdout`, and its owner closes it** (O9).
 
 Live logging, tee and progress output need a target that is valid whether or
 not capture is active and survives every scope. Holding `sys.stdout` breaks
 on the first scope (#5502); a dup of the uncaptured descriptor does not.
+Making each stream owned and closeable, rather than one per interpreter,
+means a host that runs several sessions in one process (pytest's own
+`pytester.runpytest_inprocess`, an IDE) does not accumulate descriptors.
 
-*Cost:* one extra descriptor per stream per interpreter for its lifetime, and
-an fd-level redirect made before cot.capture is taken for the terminal.
+*Cost:* one descriptor per open stream; the owner must close it, and an
+fd-level redirect made before cot.capture is taken for the terminal.
 
 ## Research topics
 

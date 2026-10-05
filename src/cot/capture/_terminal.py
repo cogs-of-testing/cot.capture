@@ -1,4 +1,4 @@
-"""Terminal streams: never captured, never closed (design O9, D7)."""
+"""Terminal streams: never captured, owned and closed by the caller (O9, D7)."""
 
 from __future__ import annotations
 
@@ -6,39 +6,44 @@ import io
 import os
 import sys
 import threading
+import warnings
 from typing import Literal, TextIO
 
+from ._annotations import Location
 from ._descriptors import uncaptured_dup
+from ._errors import TerminalClosedWarning
 
 Stream = Literal["stdout", "stderr"]
 
 _FDS: dict[str, int] = {"stdout": 1, "stderr": 2}
-_lock = threading.Lock()
-_streams: dict[str, TerminalStream] = {}
 
 
 class TerminalStream(io.TextIOBase):
-    """A text stream that always reaches the uncaptured output.
+    """A text stream that reaches the uncaptured output while it is open.
 
-    Obtain it with :func:`terminal`. It is never closed and never captured.
+    Obtain it with :func:`terminal`; whoever obtained it closes it, which
+    releases its descriptor. Writing never raises.
     """
 
-    def __init__(self, name: Stream) -> None:
+    def __init__(self, name: Stream, owner: str, created: Location) -> None:
         super().__init__()
         self._name = name
+        self.owner = owner
+        self.created = created
+        self.closed_at: Location | None = None
+        #: the error that made the stream start discarding, if any
+        self.failure: BaseException | None = None
+        self._lock = threading.Lock()
         original = getattr(sys, f"__{name}__")
         self._encoding: str = getattr(original, "encoding", None) or "utf-8"
         self._errors: str = getattr(original, "errors", None) or "strict"
         self._fd: int | None = None
         self._out: TextIO | None
-        #: the error that made the stream start discarding, if any
-        self.failure: BaseException | None = None
         try:
             fd = uncaptured_dup(_FDS[name])
         except OSError:
             # No usable descriptor: fall back to the original object, and
-            # discard if even that fails (design: writing never fails for lack
-            # of a target).
+            # discard if even that fails.
             self._out = original
         else:
             self._fd = fd
@@ -49,50 +54,97 @@ class TerminalStream(io.TextIOBase):
                 write_through=True,
             )
 
+    def describe(self) -> str:
+        text = f"terminal {self._name} owned by {self.owner!r}, created at {self.created}"
+        if self.closed_at is not None:
+            text += f", closed at {self.closed_at}"
+        return text
+
+    # -- writing ------------------------------------------------------------
+
+    def _target(self, op: str) -> TextIO | None:
+        if self.closed_at is None:
+            return self._out
+        warnings.warn(
+            TerminalClosedWarning(
+                f"{op} on closed {self.describe()}; written to sys.__{self._name}__"
+            ),
+            stacklevel=3,
+        )
+        return getattr(sys, f"__{self._name}__")  # type: ignore[no-any-return]
+
     def write(self, s: str) -> int:
-        if self._out is not None:
+        target = self._target("write")
+        if target is not None:
             try:
-                self._out.write(s)
+                target.write(s)
             except (OSError, ValueError) as exc:
-                self._give_up(exc)
+                self._give_up(exc, target)
         return len(s)
 
     def flush(self) -> None:
-        if self._out is not None:
+        target = self._target("flush")
+        if target is not None:
             try:
-                self._out.flush()
+                target.flush()
             except (OSError, ValueError) as exc:
-                self._give_up(exc)
+                self._give_up(exc, target)
 
-    def _give_up(self, exc: BaseException) -> None:
+    def _give_up(self, exc: BaseException, target: TextIO) -> None:
         """The target broke (closed, broken pipe): discard from now on."""
         self.failure = exc
-        self._out = None
+        if target is self._out:
+            self._out = None
 
     def writable(self) -> bool:
         return True
 
-    def close(self) -> None:
-        """Terminal streams live as long as the interpreter."""
-
-    def __del__(self) -> None:
-        pass
+    # -- lifetime -----------------------------------------------------------
 
     @property
     def closed(self) -> bool:
-        return False
+        return self.closed_at is not None
+
+    def close(self) -> None:
+        """Release the descriptor. Later writes warn and go to ``sys.__stdout__``."""
+        self._release(Location.here(1))
+
+    def _release(self, where: Location) -> None:
+        with self._lock:
+            if self.closed_at is not None:
+                return
+            self.closed_at = where
+            fd, self._fd, self._out = self._fd, None, None
+        if fd is not None:
+            os.close(fd)
+
+    def __del__(self) -> None:
+        if self.closed_at is None and self._fd is not None:
+            try:
+                warnings.warn(
+                    ResourceWarning(f"unclosed {self.describe()}"),
+                    source=self,
+                    stacklevel=2,
+                )
+            finally:
+                self._release(self.created)
+
+    # -- stream attributes --------------------------------------------------
 
     def fileno(self) -> int:
-        if self._fd is None:
-            if self._out is not None:
-                return self._out.fileno()
-            raise io.UnsupportedOperation(f"terminal {self._name} has no descriptor")
-        return self._fd
+        if self._fd is not None:
+            return self._fd
+        if self._out is not None:
+            return self._out.fileno()
+        raise io.UnsupportedOperation(f"{self.describe()} has no descriptor")
 
     def isatty(self) -> bool:
         if self._fd is not None:
             return os.isatty(self._fd)
-        return self._out is not None and self._out.isatty()
+        try:
+            return self._out is not None and self._out.isatty()
+        except (OSError, ValueError):
+            return False
 
     @property
     def encoding(self) -> str:  # type: ignore[override]
@@ -107,10 +159,11 @@ class TerminalStream(io.TextIOBase):
         return f"<cot.capture terminal {self._name}>"
 
 
-def terminal(name: Stream) -> TerminalStream:
-    """The interpreter's terminal stream for ``"stdout"`` or ``"stderr"``."""
-    with _lock:
-        stream = _streams.get(name)
-        if stream is None:
-            stream = _streams[name] = TerminalStream(name)
-        return stream
+def terminal(name: Stream, *, owner: str | None = None) -> TerminalStream:
+    """A new terminal stream for ``"stdout"`` or ``"stderr"``.
+
+    Each call makes a private ``dup`` of the uncaptured descriptor; close the
+    stream (or use it as a context manager) to release it.
+    """
+    created = Location.here(1)
+    return TerminalStream(name, owner or f"{created}", created)

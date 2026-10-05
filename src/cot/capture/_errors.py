@@ -11,6 +11,10 @@ class ProxyExpiredWarning(CaptureWarning):
     """A proxy was used after the scope that created it ended."""
 
 
+class TerminalClosedWarning(CaptureWarning):
+    """A terminal stream was used after its owner closed it."""
+
+
 class SlotReplacedWarning(CaptureWarning):
     """A scope ended and its slot held an object it did not put there."""
 
