@@ -139,8 +139,8 @@ files, each borrow creates its own temporary file and deletes it.
 
 ## Terminal streams
 
-`terminal("stdout", owner=...)` and `terminal("stderr", owner=...)` return a
-new terminal stream on every call. The caller owns it and closes it; it is a
+`terminal("stdout", owner=...)`, `terminal("stderr", owner=...)` and
+`terminal("stdin", owner=...)` return a new terminal stream on every call. The caller owns it and closes it; it is a
 context manager.
 
 - **Backing.** A private `dup` of the *uncaptured* descriptor: if fd 1 is
@@ -164,6 +164,15 @@ context manager.
   `errors` come from `sys.__stdout__`, defaulting to UTF-8. Writes go
   through unbuffered (`write_through`), so they interleave with captured
   output in real time.
+- **stdin.** The stdin stream reads from its dup of fd 0 and cannot be
+  written to. It reads unbuffered, a line at a time, so it never takes input
+  from the terminal beyond what it returns, and closing it loses nothing
+  that `sys.__stdin__` or a child would have read next. End of file or a
+  failed read returns `""` and records the error in `failure`; after
+  closing, reads warn and come from `sys.__stdin__`.
+- **Debuggers.** A debugger inside a scope gets a terminal stdin and stdout,
+  for example `pdb.Pdb(stdin=terminal("stdin"), stdout=terminal("stdout"))`;
+  the scope's proxies and borrows stay in place ([D9](#d9)).
 - **Limits.** Whatever redirected fd 1 *before* cot.capture first borrowed it
   (pytest's own capture, a shell redirect) counts as the terminal. A host
   that knows better passes its own stream to its tools instead.
@@ -284,9 +293,10 @@ scope, so the scope's proxies and borrows never change state mid-life.
 
 *Cost:* code that writes to `sys.stdout` or fd 1 while a scope is active is
 captured, even when a person is meant to see it, unless it is given a
-terminal stream. Interactive input has no equivalent yet: terminal streams
-cover stdout and stderr only, so a debugger inside a scope cannot read from
-the terminal.
+terminal stream. A debugger has to be constructed with terminal streams
+for stdin and stdout; one that reads `sys.stdin` itself gets the scope's
+stdin proxy. Output the debugged code writes while stopped is captured,
+like the rest of the scope.
 
 ## Research topics
 

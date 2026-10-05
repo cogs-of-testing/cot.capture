@@ -156,3 +156,67 @@ def test_close_records_where() -> None:
     assert isinstance(term, TerminalStream)
     assert term.closed_at is not None
     assert term.closed_at.filename == __file__
+
+
+def test_pdb_uses_terminal_streams_inside_fd_capture(tmp_path: Path) -> None:
+    """D9: the debugger gets the terminal through terminal streams, not suspend."""
+    out = tmp_path / "out"
+    with out.open("w") as f:
+        _run(
+            """
+            import pdb, sys
+            from cot.capture import capture, terminal
+            with capture(stdout="fd", stderr="fd", stdin=True) as scope:
+                print("before")
+                with terminal("stdin") as tin, terminal("stdout") as tout:
+                    debugger = pdb.Pdb(stdin=tin, stdout=tout)
+                    debugger.prompt = "(dbg) "
+                    secret = 41 + 1
+                    debugger.set_trace()
+                    pass
+                print("after")
+            print(repr(scope.out))
+            print("rest:", sys.stdin.read().strip())
+            """,
+            stdout=f,
+            input="p secret\nc\nleft for the process\n",
+        )
+    text = out.read_text()
+    assert "(dbg) 42\n" in text
+    assert text.endswith("'before\\nafter\\n'\nrest: left for the process\n")
+
+
+def test_stdin_reads_lines_and_is_not_writable(tmp_path: Path) -> None:
+    result = _run(
+        """
+        from cot.capture import terminal
+        with terminal("stdin") as tin:
+            assert tin.readable() and not tin.writable()
+            print(repr(tin.readline()), repr(tin.readline(2)), repr(tin.read()))
+            try:
+                tin.write("x")
+            except OSError as exc:
+                print(type(exc).__name__)
+        """,
+        input="one\ntwo\nthree\n",
+        capture_output=True,
+    )
+    assert result.stdout == "'one\\n' 'tw' 'o\\nthree\\n'\nUnsupportedOperation\n"
+
+
+def test_stdin_after_close_warns_and_reads_the_original(tmp_path: Path) -> None:
+    result = _run(
+        """
+        import warnings
+        from cot.capture import terminal
+        tin = terminal("stdin", owner="dbg")
+        tin.close()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            line = tin.readline()
+        print(repr(line), w[0].category.__name__, "'dbg'" in str(w[0].message))
+        """,
+        input="from original\n",
+        capture_output=True,
+    )
+    assert result.stdout == "'from original\\n' TerminalClosedWarning True\n"

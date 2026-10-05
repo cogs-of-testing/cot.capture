@@ -13,16 +13,18 @@ from ._annotations import Location
 from ._descriptors import uncaptured_dup
 from ._errors import TerminalClosedWarning
 
-Stream = Literal["stdout", "stderr"]
+Stream = Literal["stdout", "stderr", "stdin"]
 
-_FDS: dict[str, int] = {"stdout": 1, "stderr": 2}
+_FDS: dict[str, int] = {"stdout": 1, "stderr": 2, "stdin": 0}
 
 
 class TerminalStream(io.TextIOBase):
-    """A text stream that reaches the uncaptured output while it is open.
+    """A text stream that reaches the uncaptured terminal while it is open.
 
     Obtain it with :func:`terminal`; whoever obtained it closes it, which
-    releases its descriptor. Writing never raises.
+    releases its descriptor. The stdout and stderr streams write and never
+    raise; the stdin stream reads, unbuffered, so it takes no more from the
+    terminal than it returns.
     """
 
     def __init__(self, name: Stream, owner: str, created: Location) -> None:
@@ -38,21 +40,22 @@ class TerminalStream(io.TextIOBase):
         self._encoding: str = getattr(original, "encoding", None) or "utf-8"
         self._errors: str = getattr(original, "errors", None) or "strict"
         self._fd: int | None = None
-        self._out: TextIO | None
+        self._out: TextIO | None = None
         try:
             fd = uncaptured_dup(_FDS[name])
         except OSError:
             # No usable descriptor: fall back to the original object, and
-            # discard if even that fails.
+            # discard (or read end of file) if even that fails.
             self._out = original
         else:
             self._fd = fd
-            self._out = io.TextIOWrapper(
-                io.FileIO(fd, "w", closefd=False),
-                encoding=self._encoding,
-                errors=self._errors,
-                write_through=True,
-            )
+            if name != "stdin":
+                self._out = io.TextIOWrapper(
+                    io.FileIO(fd, "w", closefd=False),
+                    encoding=self._encoding,
+                    errors=self._errors,
+                    write_through=True,
+                )
 
     def describe(self) -> str:
         text = f"terminal {self._name} owned by {self.owner!r}, created at {self.created}"
@@ -67,13 +70,15 @@ class TerminalStream(io.TextIOBase):
             return self._out
         warnings.warn(
             TerminalClosedWarning(
-                f"{op} on closed {self.describe()}; written to sys.__{self._name}__"
+                f"{op} on closed {self.describe()}; using sys.__{self._name}__ instead"
             ),
             stacklevel=3,
         )
         return getattr(sys, f"__{self._name}__")  # type: ignore[no-any-return]
 
     def write(self, s: str) -> int:
+        if self._name == "stdin":
+            raise io.UnsupportedOperation(f"{self.describe()} is not writable")
         target = self._target("write")
         if target is not None:
             try:
@@ -97,7 +102,46 @@ class TerminalStream(io.TextIOBase):
             self._out = None
 
     def writable(self) -> bool:
-        return True
+        return self._name != "stdin"
+
+    # -- reading (stdin) ----------------------------------------------------
+
+    def readable(self) -> bool:
+        return self._name == "stdin"
+
+    def readline(self, size: int | None = -1) -> str:  # type: ignore[override]
+        """One line from the terminal; ``""`` at end of file or on failure."""
+        if self._name != "stdin":
+            raise io.UnsupportedOperation(f"{self.describe()} is not readable")
+        limit = -1 if size is None else size
+        if self.closed_at is not None or self._fd is None:
+            fallback = self._target("readline") if self.closed_at is not None else self._out
+            if fallback is None:
+                return ""
+            try:
+                return fallback.readline(limit)
+            except (OSError, ValueError) as exc:
+                self.failure = exc
+                return ""
+        # Byte by byte, so nothing after the line is taken from the terminal
+        # and lost when the stream is closed.
+        line = bytearray()
+        try:
+            while limit < 0 or len(line) < limit:
+                byte = os.read(self._fd, 1)
+                if not byte:
+                    break
+                line += byte
+                if byte == b"\n":
+                    break
+        except OSError as exc:
+            self.failure = exc
+        return line.decode(self._encoding, self._errors)
+
+    def read(self, size: int | None = -1) -> str:
+        if size is not None and size >= 0:
+            return self.readline(size)
+        return "".join(iter(self.readline, ""))
 
     # -- lifetime -----------------------------------------------------------
 
@@ -160,7 +204,7 @@ class TerminalStream(io.TextIOBase):
 
 
 def terminal(name: Stream, *, owner: str | None = None) -> TerminalStream:
-    """A new terminal stream for ``"stdout"`` or ``"stderr"``.
+    """A new terminal stream for ``"stdout"``, ``"stderr"`` or ``"stdin"``.
 
     Each call makes a private ``dup`` of the uncaptured descriptor; close the
     stream (or use it as a context manager) to release it.

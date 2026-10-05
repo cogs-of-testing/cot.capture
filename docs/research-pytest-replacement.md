@@ -95,8 +95,9 @@ wraps setup/call/teardown in `cot.capture.capture(...)` and calls
   current test's capture instead.
 - **`breakpoint()` inside a test breaks**: the stdin proxy refuses the
   read, and pdb's prompt goes into the capture. Nothing suspends the scope,
-  by design ([D9](design/streams.md#d9)); pdb needs terminal streams
-  instead (4.1).
+  by design ([D9](design/streams.md#d9)). A pdb built on terminal stdin
+  and stdout works inside an fd scope (`testing/test_terminal.py`); wiring
+  it into pytest's debugging plugin is 4.1.
 - **fd mode is slower**: 3000 one-line tests, best of five runs:
 
   | Mode | Time |
@@ -121,7 +122,7 @@ wraps setup/call/teardown in `cot.capture.capture(...)` and calls
 |---|---|---|
 | per-phase sections | `Scope` + `add_report_section` | none |
 | collection and conftest-import capture | same | none (host wiring) |
-| **reach the terminal mid-scope** (pdb, `--setup-show`, timeout, benchmark) | terminal streams for stdout/stderr; no suspend by design | pdb needs a terminal **stdin** too: `pdb.Pdb(stdin=..., stdout=...)` from the breakpoint hook, so the slots stay captured |
+| **reach the terminal mid-scope** (pdb, `--setup-show`, timeout, benchmark) | terminal streams for stdout, stderr and stdin; no suspend by design | host wiring: the breakpoint hook and `--pdb` build `pdb.Pdb(stdin=terminal("stdin"), stdout=terminal("stdout"))` and close both when the debugger returns; pytest's `pytestPDB._init_pdb` builds the debugger without streams (so it uses `sys.stdin`/`sys.stdout`) and its header `TerminalWriter` on `sys.stdout`, so this needs a pytest change or a replacement debugging plugin |
 | KeyboardInterrupt, internal error | scopes exit on the exception | none; the host ends the scope instead of suspending it |
 | **read so far** (pdb, timeout, `capsys.readouterr()`) | text only at scope end | snapshot-and-clear on a live scope |
 | `capsys`/`capfd`/`*binary`/`capteesys` | no fixture; text only | bytes access; tee at slot level (write to target and a terminal stream); `disabled()` has to make `print()` reach the terminal without suspend, for example a nested scope whose slot target is a terminal stream (undecided) |
@@ -191,8 +192,8 @@ the smallest job of the three:
 
 ## 6. Suggested order
 
-1. Read-so-far, a terminal stdin for pdb, then a `capturemanager` compat
-   object whose suspend is a no-op; that unblocks pdb, timeout, benchmark,
+1. Read-so-far, pdb wired to terminal streams, then a `capturemanager`
+   compat object whose suspend is a no-op; that unblocks pdb, timeout, benchmark,
    print, `--setup-show`.
 2. Cut per-scope set-up cost in fd mode, to match built-in speed.
 3. `capsys`/`capfd` fixtures and tee on the same scope API.
