@@ -75,7 +75,8 @@ caplog stash keys. The private surface third parties depend on is small:
 **suspend, resume, read-so-far, and "disabled" as a context manager.** Three
 of those five uses exist only to reach the terminal, which a
 [terminal stream](design/streams.md#terminal-streams) gives without
-suspending anything.
+suspending anything. cot.capture has no suspend
+([D9](design/streams.md#d9)), so all of them have to be expressed that way.
 
 ## 3. What the spike showed
 
@@ -94,11 +95,23 @@ wraps setup/call/teardown in `cot.capture.capture(...)` and calls
   current test's capture instead.
 - **`breakpoint()` inside a test breaks**: the stdin proxy refuses the
   read, and pdb's prompt goes into the capture. Nothing suspends the scope,
-  because cot.capture has no suspend.
-- **fd mode is slower**: 3000 one-line tests took about 2.9 s against 1.8 s
-  for built-in fd capture (three runs each; slot mode 1.7 s, built-in sys
-  1.7 s, no capture 1.4 s). Each phase creates two temporary files, where
-  pytest creates one per stream per session and truncates it (#2205).
+  by design ([D9](design/streams.md#d9)); pdb needs terminal streams
+  instead (4.1).
+- **fd mode is slower**: 3000 one-line tests, best of five runs:
+
+  | Mode | Time |
+  |---|---|
+  | cot.capture fd, a temporary file per scope | 3.3 s |
+  | cot.capture fd, [capture files](design/streams.md#d8) shared by a test's phases | 3.0 s |
+  | built-in fd | 2.4 s |
+  | cot.capture slot | 2.3 s |
+  | built-in sys | 2.0 s |
+  | no capture | 1.8 s |
+
+  Sharing the files saves about 0.1 ms per test. The rest of the gap is
+  per-scope set-up in Python (proxies, the descriptor-level text wrapper,
+  annotations, the stdin proxy): about 0.2 ms per test for three scopes,
+  measured outside pytest. File creation is no longer the main cost.
 
 ## 4. Gaps in cot.capture, per plugin
 
@@ -108,12 +121,13 @@ wraps setup/call/teardown in `cot.capture.capture(...)` and calls
 |---|---|---|
 | per-phase sections | `Scope` + `add_report_section` | none |
 | collection and conftest-import capture | same | none (host wiring) |
-| **suspend / resume a live scope** (pdb, `--setup-show`, timeout, benchmark, KeyboardInterrupt, internal error) | no | a `Scope.suspended()` that gives back borrowed fds and puts the replaced objects back in the slots for its block, stdin included |
+| **reach the terminal mid-scope** (pdb, `--setup-show`, timeout, benchmark) | terminal streams for stdout/stderr; no suspend by design | pdb needs a terminal **stdin** too: `pdb.Pdb(stdin=..., stdout=...)` from the breakpoint hook, so the slots stay captured |
+| KeyboardInterrupt, internal error | scopes exit on the exception | none; the host ends the scope instead of suspending it |
 | **read so far** (pdb, timeout, `capsys.readouterr()`) | text only at scope end | snapshot-and-clear on a live scope |
-| `capsys`/`capfd`/`*binary`/`capteesys` | no fixture; text only | bytes access; tee at slot level (write to target and a terminal stream); `disabled()` = suspend |
+| `capsys`/`capfd`/`*binary`/`capteesys` | no fixture; text only | bytes access; tee at slot level (write to target and a terminal stream); `disabled()` has to make `print()` reach the terminal without suspend, for example a nested scope whose slot target is a terminal stream (undecided) |
 | one fixture per test, fixture over `-s` | scopes nest freely | none; nesting is strictly more general |
-| speed in fd mode | new temp files per scope | reuse and truncate a target per descriptor across scopes |
-| `capturemanager` duck API for pytest core and the five plugins | no | a compat object registered as `capturemanager`: `suspend_global_capture(in_)`, `resume_global_capture()`, `read_global_capture()`, `global_and_fixture_disabled()`, `is_capturing()`, `is_globally_capturing()`, `_capture_fixture` |
+| speed in fd mode | capture files shared by a test's phases | per-scope set-up cost (section 3) |
+| `capturemanager` duck API for pytest core and the five plugins | no | a compat object registered as `capturemanager`: `read_global_capture()`, `is_capturing()`, `is_globally_capturing()`, `_capture_fixture`; `suspend_global_capture(in_)`, `resume_global_capture()` and `global_and_fixture_disabled()` can only be no-ops, so callers that print after "suspending" stay captured unless they write through the terminal reporter |
 | `TerminalReporter` bound to `sys.stdout` at configure | pytest suspends global capture before configure, so it binds the real stream | the host must keep no scope active at `pytest_configure`, or hand the reporter a terminal stream (needs a pytest change) |
 | stale-reference behaviour | raise | the pytest binding should default to `write_back=True` |
 
@@ -177,9 +191,10 @@ the smallest job of the three:
 
 ## 6. Suggested order
 
-1. `Scope.suspended()` and read-so-far, then a `capturemanager` compat
-   object; that unblocks pdb, timeout, benchmark, print, `--setup-show`.
-2. Target reuse for fd mode, to match built-in speed.
+1. Read-so-far, a terminal stdin for pdb, then a `capturemanager` compat
+   object whose suspend is a no-op; that unblocks pdb, timeout, benchmark,
+   print, `--setup-show`.
+2. Cut per-scope set-up cost in fd mode, to match built-in speed.
 3. `capsys`/`capfd` fixtures and tee on the same scope API.
 4. Warnings recorder (smallest plugin, one hook).
 5. Logging source, `caplog`, live logging on a terminal stream.
@@ -206,20 +221,31 @@ stash keys, `pytest_warning_recorded`, `capstdout`/`capstderr`/`caplog`,
 
 Not part of the package and not executed by the test suite; recorded so the
 results in section 3 can be reproduced
-(`pytest -p no:capture -p cot_spike`).
+(`pytest -p no:capture -p cot_spike`, with `--cot-files=per-scope` for the unshared row).
 
 ```python
 import pytest
-from cot.capture import capture
+from cot.capture import capture, capture_files
 
 
 class CotCapture:
     def __init__(self, config: pytest.Config) -> None:
         self.level = "fd" if config.getoption("cot_capture") == "fd" else "slot"
+        self.shared = config.getoption("cot_files") == "shared"
+        self.files = None
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_protocol(self, item):
+        if not self.shared:
+            return (yield)
+        with capture_files(item.nodeid) as self.files:
+            try:
+                return (yield)
+            finally:
+                self.files = None
 
     def _wrap(self, item: pytest.Item, when: str):
-        scope = capture(stdout=self.level, stderr=self.level, stdin=True,
-                        name=f"{item.nodeid}::{when}")
+        scope = capture(stdout=self.level, stderr=self.level, stdin=True, name=f"{item.nodeid}::{when}", files=self.files)
         try:
             with scope:
                 return (yield)
@@ -244,6 +270,7 @@ class CotCapture:
 
 def pytest_addoption(parser):
     parser.addoption("--cot-capture", default="fd", choices=["fd", "slot"])
+    parser.addoption("--cot-files", default="shared", choices=["shared", "per-scope"])
 
 
 def pytest_configure(config):

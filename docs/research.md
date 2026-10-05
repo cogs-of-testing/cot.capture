@@ -420,7 +420,8 @@ each as its own building block.
 4. **Composable scopes.** A scope is a context manager that selects levels
    and a sink; scopes nest and stack, so "one capture fixture per test" and
    "a fixture breaks global capture" (#4428) cannot happen by construction.
-   Suspend and resume belong to the scope, not to a manager singleton.
+   No suspend: writers that must reach the terminal get a terminal
+   stream ([D9](design/streams.md#d9), decided 2026-10-05).
 5. **Warnings as a first-class source.** Record warnings through the routed
    `showwarning` instead of a global `catch_warnings` per scope, so filters
    and recording are separated. Use the 3.14 context-aware machinery when

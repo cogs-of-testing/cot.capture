@@ -10,7 +10,7 @@ from types import TracebackType
 from typing import Literal, TextIO
 
 from ._annotations import Annotations, Location
-from ._descriptors import Borrow, borrow
+from ._descriptors import Borrow, CaptureFile, borrow
 from ._errors import SlotReplacedWarning
 from ._proxy import StreamProxy
 
@@ -26,6 +26,44 @@ class ForeignReplacement:
     slot: str
     found: str
     proxy: str
+
+
+class CaptureFiles:
+    """One :class:`CaptureFile` per standard stream, for a set of scopes.
+
+    Pass it to several scopes in turn (the phases of one test) so
+    descriptor-level capture reuses two files instead of creating two per
+    scope (design D8). Whoever created it closes it; it is a context manager.
+    """
+
+    def __init__(self, owner: str | None = None) -> None:
+        self.owner = owner or f"files-{id(self):x}"
+        self.stdout = CaptureFile(self.owner)
+        self.stderr = CaptureFile(self.owner)
+
+    def __getitem__(self, slot: str) -> CaptureFile:
+        if slot == "stdout":
+            return self.stdout
+        if slot == "stderr":
+            return self.stderr
+        raise KeyError(slot)
+
+    def close(self) -> None:
+        try:
+            self.stdout.close()
+        finally:
+            self.stderr.close()
+
+    def __enter__(self) -> CaptureFiles:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+
+def capture_files(owner: str | None = None) -> CaptureFiles:
+    """Capture files to share between scopes; close them when done."""
+    return CaptureFiles(owner)
 
 
 @dataclasses.dataclass
@@ -44,7 +82,9 @@ class Scope:
     ``None`` to leave the stream alone. ``stdin`` is ``False`` to leave it
     alone, ``True`` to refuse reads, or a string to serve as input.
     ``write_back`` makes the scope's proxies write back to the slot after
-    the scope ended, instead of raising.
+    the scope ended, instead of raising. ``files`` are the capture files
+    descriptor-level capture appends to; without them each borrow creates
+    and deletes its own.
     """
 
     def __init__(
@@ -55,11 +95,13 @@ class Scope:
         stdin: bool | str = False,
         name: str | None = None,
         write_back: bool = False,
+        files: CaptureFiles | None = None,
     ) -> None:
         self.name = name or f"scope-{id(self):x}"
         self._levels: dict[str, Level | None] = {"stdout": stdout, "stderr": stderr}
         self._stdin = stdin
         self._write_back = write_back
+        self._files = files
         self._installed: list[_Installed] = []
         self._captured: dict[str, str] = {}
         self.diagnostics: list[ForeignReplacement] = []
@@ -82,12 +124,18 @@ class Scope:
 
     def __enter__(self) -> Scope:
         here = Location.here(1)
-        for slot, level in self._levels.items():
-            if level is not None:
-                self._install(slot, level, here)
-        if self._stdin is not False:
-            text = self._stdin if isinstance(self._stdin, str) else None
-            self._install_proxy("stdin", None, None, None, here, stdin_text=text)
+        try:
+            for slot, level in self._levels.items():
+                if level is not None:
+                    self._install(slot, level, here)
+            if self._stdin is not False:
+                text = self._stdin if isinstance(self._stdin, str) else None
+                self._install_proxy("stdin", None, None, None, here, stdin_text=text)
+        except BaseException:
+            # Undo what was installed before the refusal (a borrow of a
+            # protected descriptor, a capture file already in use).
+            self.__exit__(None, None, None)
+            raise
         return self
 
     def _install(self, slot: str, level: Level, here: Location) -> None:
@@ -98,7 +146,7 @@ class Scope:
         if level == "fd":
             fd = _FDS[slot]
             _flush(replaced)
-            b = borrow(fd, self.name)
+            b = borrow(fd, self.name, None if self._files is None else self._files[slot])
             target = io.TextIOWrapper(
                 io.FileIO(fd, "w", closefd=False),
                 encoding=encoding,
@@ -190,8 +238,14 @@ def capture(
     stdin: bool | str = False,
     name: str | None = None,
     write_back: bool = False,
+    files: CaptureFiles | None = None,
 ) -> Scope:
     """Create a :class:`Scope`; use it as a context manager."""
     return Scope(
-        stdout=stdout, stderr=stderr, stdin=stdin, name=name, write_back=write_back
+        stdout=stdout,
+        stderr=stderr,
+        stdin=stdin,
+        name=name,
+        write_back=write_back,
+        files=files,
     )

@@ -1,4 +1,4 @@
-"""File descriptor borrowing (design O5 to O7, D1)."""
+"""File descriptor borrowing and capture files (design O5 to O7, D1, D8)."""
 
 from __future__ import annotations
 
@@ -34,6 +34,64 @@ def _in_main_interpreter() -> bool:
     return interpreters.get_current() == interpreters.get_main()
 
 
+class CaptureFile:
+    """A temporary file that several borrows write to in turn (design D8).
+
+    A host keeps one per descriptor for a set of scopes, such as the phases
+    of one test, so each scope does not create its own. Each borrow gets
+    the bytes that arrived during it. Whoever created the file closes it.
+    """
+
+    def __init__(self, owner: str) -> None:
+        self.owner = owner
+        self._file: IO[bytes] | None = tempfile.TemporaryFile(buffering=0)
+        #: the owner of the borrow writing to the file now, if any
+        self.holder: str | None = None
+
+    @property
+    def closed(self) -> bool:
+        return self._file is None
+
+    def fileno(self) -> int:
+        if self._file is None:
+            raise ValueError(f"capture file of {self.owner!r} is closed")
+        return self._file.fileno()
+
+    def _take(self, holder: str) -> int:
+        """Claim the file for a borrow; return the offset its bytes start at."""
+        if self._file is None:
+            raise BorrowError(f"capture file of {self.owner!r} is closed; {holder!r} cannot use it")
+        if self.holder is not None:
+            raise BorrowError(
+                f"capture file of {self.owner!r} is in use by {self.holder!r}; "
+                f"{holder!r} cannot use it too"
+            )
+        self.holder = holder
+        return self._file.seek(0, os.SEEK_END)
+
+    def _release(self, start: int) -> bytes:
+        assert self._file is not None
+        self.holder = None
+        self._file.seek(start)
+        return self._file.read()
+
+    def close(self) -> None:
+        """Delete the file. Refused while a borrow writes to it."""
+        if self.holder is not None:
+            raise BorrowError(
+                f"capture file of {self.owner!r} closed while {self.holder!r} still uses it"
+            )
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def __enter__(self) -> CaptureFile:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+
 class Borrow:
     """One redirection of a descriptor to a temporary file.
 
@@ -41,12 +99,20 @@ class Borrow:
     order per descriptor.
     """
 
-    def __init__(self, fd: int, owner: str) -> None:
+    def __init__(self, fd: int, owner: str, file: CaptureFile | None) -> None:
         self.fd = fd
         self.owner = owner
-        self._target: IO[bytes] = tempfile.TemporaryFile(buffering=0)
-        self._saved = os.dup(fd)
-        os.dup2(self._target.fileno(), fd)
+        self._own_file = file is None
+        self._file = file if file is not None else CaptureFile(owner)
+        self._start = self._file._take(owner)
+        try:
+            self._saved = os.dup(fd)
+            os.dup2(self._file.fileno(), fd)
+        except BaseException:
+            self._file._release(self._start)
+            if self._own_file:
+                self._file.close()
+            raise
         self._returned = False
 
     def give_back(self) -> bytes:
@@ -62,9 +128,9 @@ class Borrow:
             os.dup2(self._saved, self.fd)
             os.close(self._saved)
             self._returned = True
-        self._target.seek(0)
-        data = self._target.read()
-        self._target.close()
+        data = self._file._release(self._start)
+        if self._own_file:
+            self._file.close()
         return data
 
 
@@ -75,13 +141,17 @@ def uncaptured_dup(fd: int) -> int:
         return os.dup(stack[0]._saved if stack else fd)
 
 
-def borrow(fd: int, owner: str) -> Borrow:
-    """Redirect ``fd`` to a fresh temporary file on behalf of ``owner``."""
+def borrow(fd: int, owner: str, file: CaptureFile | None = None) -> Borrow:
+    """Redirect ``fd`` to a temporary file on behalf of ``owner``.
+
+    With ``file``, the borrow appends to that capture file and leaves it open
+    when given back; otherwise it creates its own and deletes it.
+    """
     if not _in_main_interpreter():
         raise BorrowError("only the main interpreter may borrow descriptors")
     with _lock:
         if fd in _protected:
             raise BorrowError(f"fd {fd} is protected and cannot be borrowed by {owner!r}")
-        b = Borrow(fd, owner)
+        b = Borrow(fd, owner, file)
         _stacks.setdefault(fd, []).append(b)
         return b

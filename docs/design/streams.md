@@ -127,6 +127,16 @@ encoding and `errors="replace"`. Python writes reach the same file through
 the descriptor-level proxy ([D3](#d3)), so the result is one byte stream in
 write order, without attribution.
 
+**Capture files** ([D8](#d8)). A host that runs a set of scopes one after
+another, such as the setup, call and teardown of one test, creates one
+capture file per descriptor for the set and passes them to each scope. Each
+borrow appends to the file and gets back only the bytes that arrived during
+it; the file stays open. One borrow at a time may write to a file: a nested
+scope given a file that is in use is refused, and a refused scope undoes
+whatever it had already installed. Whoever created the files closes them;
+closing a file that a borrow still writes to is refused. Without capture
+files, each borrow creates its own temporary file and deletes it.
+
 ## Terminal streams
 
 `terminal("stdout", owner=...)` and `terminal("stderr", owner=...)` return a
@@ -166,6 +176,10 @@ descriptors; leaving closes the proxies (O1), gives the descriptors back (O5),
 checks for foreign replacement (O4) and makes the captured text available.
 Scopes nest: an inner scope installs over the outer one's proxy and restores
 it on exit.
+
+A scope is never suspended ([D9](#d9)). Whatever must reach the terminal
+while a scope is active (a debugger, progress output, live logging) writes
+to a [terminal stream](#terminal-streams).
 
 There is one current scope per slot per interpreter, not per thread. Routing
 output by thread or task is future research ([R2](#r2)).
@@ -225,8 +239,8 @@ object left in the slot at scope exit stays there.
 
 **stdin starts as a minimal proxy** that refuses to read unless given input.
 
-*Cost:* no interactive input inside a scope; suspending capture for a
-debugger is the host's job.
+*Cost:* no interactive input inside a scope; a debugger needs its own
+streams ([D9](#d9)).
 
 ### D7
 
@@ -242,6 +256,37 @@ means a host that runs several sessions in one process (pytest's own
 
 *Cost:* one descriptor per open stream; the owner must close it, and an
 fd-level redirect made before cot.capture is taken for the terminal.
+
+### D8
+
+**A set of scopes shares one capture file per descriptor.** The host creates
+and closes the files; each borrow appends and reads back its own slice.
+
+pytest-style hosts run three scopes per test. Creating and deleting two
+temporary files per scope was measurable; sharing them across a test's
+phases removes four of six file creations per test.
+
+*Cost:* the file grows until its owner closes it, so a long-lived set holds
+all of its output on disk; one writer at a time, so nested scopes need their
+own files or none.
+
+### D9
+
+**No suspend.** A scope stays in force from entry to exit; nothing puts the
+real streams back temporarily.
+
+Suspension exists in pytest so that a debugger, `--setup-show`, live logging
+and plugins can reach the terminal, and much of its bug history is about
+that choreography
+([1](../research.md#1-how-pytest-captures-today), #3819, #12888). A
+terminal stream gives those writers the terminal without touching the
+scope, so the scope's proxies and borrows never change state mid-life.
+
+*Cost:* code that writes to `sys.stdout` or fd 1 while a scope is active is
+captured, even when a person is meant to see it, unless it is given a
+terminal stream. Interactive input has no equivalent yet: terminal streams
+cover stdout and stderr only, so a debugger inside a scope cannot read from
+the terminal.
 
 ## Research topics
 
