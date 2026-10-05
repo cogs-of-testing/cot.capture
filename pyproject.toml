@@ -1,0 +1,49 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = [ "hatch-vcs", "hatchling" ]
+
+[project]
+name = "cot-capture"
+description = "building blocks for capturing output at the slot and file descriptor level"
+readme = "README.md"
+authors = [
+  { name = "Ronny Pfannschmidt", email = "opensource@ronnypfannschmidt.de" },
+]
+requires-python = ">=3.10"
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Framework :: Pytest",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
+]
+dynamic = [ "version" ]
+urls.Source = "https://github.com/cogs-of-testing/cot.capture"
+
+[dependency-groups]
+test = [ "pytest>=9" ]
+typing = [ "mypy>=1" ]
+
+[tool.hatch]
+version.source = "vcs"
+version.raw-options.fallback_version = "0.0.0"
+build.targets.wheel.packages = [ "src/cot" ]
+build.targets.wheel.sources = [ "src" ]
+
+[tool.uv]
+default-groups = [ "test", "typing" ]
+
+[tool.pytest]
+ini_options.testpaths = [ "testing" ]
+ini_options.filterwarnings = [ "error" ]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true

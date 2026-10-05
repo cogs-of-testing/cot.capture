@@ -1,186 +1,214 @@
 # Streams, ownership, descriptors and file objects
 
-Draft for the design session. It proposes who owns what when output is
-captured, and how capture at the file-descriptor level relates to capture at
-the file-object level. Everything here is a proposal until the open questions
-at the end are settled; section numbers in brackets point into
+Who owns what when output is captured, and how capture at the
+file-descriptor level relates to capture at the file-object level. Settled in
+the design session of 2026-10-05; the [decisions](#decisions) record what was
+chosen and what it costs. Section numbers in brackets point into
 [the research](../research.md).
 
 ## The three things people call "stdout"
 
 | Thing | Example | Scope | Created by |
 |---|---|---|---|
-| **descriptor** | fd 1 | the process: every thread, every interpreter, every child that inherits it | the OS, at process start, or whoever `open`s / `dup`s |
+| **descriptor** | fd 1 | the process: every thread, every interpreter, every child that inherits it | the OS at process start, or whoever `open`s / `dup`s |
 | **slot** | `sys.stdout`, a `StreamHandler.stream`, faulthandler's file, a library's cached `self.out` | wherever the reference lives | whoever assigns it |
 | **file object** | the `TextIOWrapper` that `sys.__stdout__` refers to | one interpreter | the interpreter at start-up, or whoever wraps an fd |
 
 A writer reaches output through a chain: a slot holds a file object, the file
-object (through `BufferedWriter` and `FileIO`) writes to a descriptor, the
-descriptor points at a file, pipe or terminal. Capture can cut the chain at
-two places:
+object writes (through `BufferedWriter` and `FileIO`) to a descriptor, the
+descriptor points at a file, pipe or terminal. Capture cuts the chain at one
+of two places:
 
-- **slot level**: put a different file object in the slot. Sees only Python
+- **slot level**: put a capture file object in the slot. Sees only Python
   writes that look up that slot, in that interpreter.
-- **descriptor level**: `dup2` a different target over the descriptor. Sees
+- **descriptor level**: `dup2` a capture target over the descriptor. Sees
   everything that reaches the descriptor, from anyone, without attribution.
 
-Almost every bug in the research is one of two mismatches between these:
+Almost every bug in the research is one of two mismatches:
 
-1. **Early binding.** A writer copied the file object out of the slot before
-   capture changed the slot, then kept writing to it after capture closed or
-   replaced it ([2.1](../research.md#21-stale-references-to-sysstdoutsysstderr-the-largest-class)).
-2. **Wrong level for the writer.** A slot-level capture cannot see C code,
-   child processes or other interpreters; a descriptor-level capture cannot
-   tell them apart ([2.2](../research.md#22-mode-specific-breakage),
+1. **Early binding.** A writer copied the file object out of the slot, then
+   kept using it after capture moved on
+   ([2.1](../research.md#21-stale-references-to-sysstdoutsysstderr-the-largest-class)).
+   The object people copy and misplace is the one capture put in the slot:
+   the **proxy**.
+2. **Wrong level for the writer.** Slot capture cannot see C code, children
+   or other interpreters; descriptor capture cannot tell them apart
+   ([2.2](../research.md#22-mode-specific-breakage),
    [2.5](../research.md#25-subinterpreters)).
 
 ## Ownership rules
 
-**O1. Capture never closes what it did not open, and never closes what it
-handed out.** pytest closes its capture file objects after every phase; that
-is the closed-file error in #5502, #5282 and #3344. Anything cot.capture puts
-in a slot stays a valid, writable object until the interpreter exits.
+**O1. Capture closes what it hands out.** Every proxy has a lifetime: the
+scope that created it. When the scope ends, the proxy is closed and the slot
+gets back what it held before. A proxy is never reused by a later scope.
 
-**O2. Slots are filled once, then switched inside.** cot.capture installs one
-proxy file object per standard slot per interpreter, and redirects by
-changing the proxy's target, never by putting another object in the slot.
-Early-bound references therefore follow the current capture.
+**O2. Proxies carry their history.** Each proxy is annotated with the slot it
+was made for, its owner (the scope's name), and where and when it was
+installed and closed (code location and monotonic time). Every warning and
+error about a proxy names these, so a misplaced reference can be traced to
+whoever kept it (#5743).
 
-**O3. Descriptors are borrowed, never owned.** cot.capture owns only the
+**O3. Use after the lifetime warns.** Writing to, flushing or reading from a
+closed proxy emits a `ProxyExpiredWarning` carrying the annotations, at the
+caller's location. What happens to the data next is chosen per proxy:
+
+- **write-back**, when requested: the data goes to the proxy's write-back
+  target, by default whatever the slot holds at the time of the write (for
+  `sys.stdout`, the current `sys.stdout`). If that is a closed proxy, the
+  data goes to what that proxy replaced, and so on; a cycle or a dead end
+  ends at the slot's original object (`sys.__stdout__`). A live proxy of
+  another scope is a normal target, so write-back output is captured by
+  whichever scope is current.
+- otherwise: **[pending decision](#d2)**.
+
+**O4. Foreign replacement is tolerated and reported.** Code under test may put
+its own object in a slot during a scope (Click's `CliRunner`,
+`contextlib.redirect_stdout`, IDEs, execnet's worker set-up). cot.capture does
+not fight it: writes to that object are not captured. When the scope ends and
+the slot does not hold the scope's proxy, the scope records a
+`ForeignReplacement` diagnostic and emits a `SlotReplacedWarning` naming what
+it found, and leaves the slot as it is.
+
+**O5. Descriptors are borrowed, never owned.** cot.capture owns only the
 descriptors it creates: the saved copy (`dup`) and the capture target.
-Redirecting fd 1 is a borrow: save, `dup2` the target over it, and give it
-back with `dup2(saved, 1)`. Borrows form one LIFO stack per descriptor per
+Redirecting fd 1 is a borrow: flush, save, `dup2` the target over it, and give
+it back with `dup2(saved, 1)`. Borrows form one LIFO stack per descriptor per
 process, guarded by a lock, because the descriptor table is process-wide.
-Giving back out of order is an error that names both borrowers, not a silent
-corruption.
+Giving back out of order raises an error that names both borrowers.
 
-**O4. Some descriptors are off limits.** A process can declare descriptors
-capture must never borrow: execnet's protocol lives on dups of fd 0 and 1,
-runsomewhere moves its protocol off fd 0 and 1 before running user code
+**O6. Some descriptors are off limits.** A process can declare descriptors
+that capture must never borrow: execnet keeps its protocol on dups of fd 0 and
+1, runsomewhere moves its protocol off fd 0 and 1 before running user code
 ([2.6](../research.md#26-subprocesses-execnet-and-pytest-xdist)). Borrowing a
 protected descriptor fails at once.
 
-**O5. Only the main interpreter borrows descriptors.** Subinterpreters share
-the descriptor table but not Python objects, so one stack can only live in
-one interpreter. A subinterpreter installs its own slot proxies and sends its
-events to the main interpreter's sink; it never calls `dup2`.
+**O7. Only the main interpreter borrows descriptors.** Subinterpreters share
+the descriptor table but not Python objects, so the borrow stack lives in one
+interpreter.
 
-**O6. Foreign slot replacement is tolerated, not fought.** Code under test may
-put its own object in `sys.stdout` (Click's `CliRunner`,
-`contextlib.redirect_stdout`, IDEs, execnet's worker set-up). Writes to that
-object are not ours. When it puts ours back, capture resumes. cot.capture
-never re-installs over a foreign object.
+**O8. The library writes only where it was told to.** It never prints on its
+own account; write-back (O3) is the one path to a real stream, and only when
+requested.
 
-**O7. The library never writes to a stream it was not given.** It renders and
-returns; the host decides what reaches the terminal (as in
-`cot.config.ingest` I4).
+## Proxies
 
-## The proxy
+A proxy is a text file object that stands in a slot for one scope.
 
-One `StreamProxy` per standard slot (`stdout`, `stderr`, `stdin`) per
-interpreter, installed by the session.
-
-- **Target resolution per write.** Each `write` looks up the current scope in
-  a `ContextVar`; with no scope it writes to the *fallback*: the object that
-  was in the slot when the proxy was installed.
-- **Real stream attributes.** `encoding`, `errors`, `newlines`, `name`,
-  `mode`, `isatty()`, `buffer` come from the fallback, so libraries that
-  inspect the stream see the real terminal's answers
-  ([2.2](../research.md#22-mode-specific-breakage), #4389, #11270).
-- **`fileno()`** is the open question [Q3](#q3-proxy-fileno-with-no-descriptor-capture).
-- **Flush before every borrow and give-back.** A buffered file object holds
-  bytes destined for the descriptor it wrapped; `dup2` under it sends them to
-  the wrong target. The session flushes every proxy and the fallbacks in this
-  interpreter before switching a descriptor. Buffers in other interpreters
-  and in C stdio are [Q5](#q5-flush-c-stdio-on-descriptor-switches).
+- **Target.** It writes to the scope's capture target: an in-memory buffer at
+  slot level, a file object over the borrowed descriptor at descriptor level
+  ([D3](#d3)).
+- **Attributes.** `encoding` and `errors` come from the object the proxy
+  replaced, so captured text is encoded the way the real stream would have
+  encoded it (#4389). `isatty()` is `False`. `name` and `mode` describe the
+  proxy.
+- **`fileno()`** returns the borrowed descriptor at descriptor level and
+  raises `io.UnsupportedOperation` at slot level ([D4](#d4)).
+- **stdin.** The stdin proxy is minimal: reading raises an error naming the
+  scope, unless the scope was given input text, which it then serves
+  ([D6](#d6)).
+- **Flushing.** Before a descriptor is borrowed or given back, the session
+  flushes the slot objects of this interpreter, so buffered bytes land on the
+  side of the switch they were written on.
 
 ## Descriptor capture
 
-A borrow redirects one descriptor to a target and records what arrives as
-`raw` bytes. Python writes do not take this path while a proxy is installed
-([Q2](#q2-python-writes-under-descriptor-capture)), so what arrives is what
-only the descriptor level can see: C extensions, child processes,
-subinterpreters, `os.write`. It is not attributed to a thread or scope.
+A borrow redirects one descriptor to a temporary file ([D1](#d1)) and returns
+what arrived as bytes when it ends, decoded with the replaced stream's
+encoding and `errors="replace"`. Python writes reach the same file through
+the descriptor-level proxy ([D3](#d3)), so the result is one byte stream in
+write order, without attribution.
 
-The target is [Q1](#q1-descriptor-target-temporary-file-or-pipe).
+## Scopes
 
-## Events and the sink
+A scope is a context manager that selects, per standard stream, a level
+(`slot` or `fd`) or no capture. Entering installs its proxies and borrows its
+descriptors; leaving closes the proxies (O1), gives the descriptors back (O5),
+checks for foreign replacement (O4) and makes the captured text available.
+Scopes nest: an inner scope installs over the outer one's proxy and restores
+it on exit.
 
-A sink is an ordered, bounded list of events
-`(source, stream, payload, time, thread, interpreter, scope)`:
+There is one current scope per slot per interpreter, not per thread. Routing
+output by thread or task is future research ([R2](#r2)).
 
-- `source`: `slot`, `fd`, later `logging`, `warnings`, `remote`;
-- `payload`: `str` from slots, `bytes` from descriptors; views decode
-  `bytes` with the fallback's encoding and `errors="replace"`;
-- ordering is exact among slot events and approximate between slot and
-  descriptor events.
+## Decisions
 
-Events use only values a runsomewhere channel carries (`None`, `bool`, `int`,
-`float`, `str`, `bytes`, tuples, lists, dicts), so a worker can forward them
-unchanged ([4.3](../research.md#43-concessions-for-execnet-and-cotrunsomewhere)).
+### D1
 
-## Scopes and threads
+**Descriptor capture writes to a temporary file.**
 
-A scope is a context manager that selects levels and a sink. It sets the
-`ContextVar` for its block and, if it asks for descriptors, borrows them.
-Scopes nest; the inner one wins for slot writes in its context; descriptor
-borrows stack per O3.
+No reader thread, no deadlock when a child writes more than a pipe buffer,
+survives `fork`.
 
-Threads see the scope that is current in their context. On 3.14 with
-`thread_inherit_context` that is the scope they were started in; otherwise a
-thread started with `contextvars.copy_context().run` carries it; any other
-thread writes to the fallback, or to a session-level sink if one is set
-([2.4](../research.md#24-threads)).
+*Cost:* output is only read when the borrow ends: no live tee and no
+timestamps at descriptor level. A separate process as intermediate is
+research topic [R1](#r1).
 
-## Out of scope for this document
+### D2
 
-Logging, warnings, faulthandler and remote forwarding are sources and sinks
-on top of this model; they get their own documents once the questions below
-are settled.
+**A closed proxy used without write-back:** *pending; asked in the thread.
+Recommended: warn, then raise a `ValueError` subclass naming the
+annotations.*
 
-## Open questions
+### D3
 
-### Q1. Descriptor target: temporary file or pipe
+**Under descriptor capture, Python writes go through the descriptor.**
 
-- **temporary file** *(recommended)*: no reader thread, no deadlock when a
-  child writes more than a pipe buffer, survives `fork`; output is read when
-  the borrow ends, so there are no timestamps and no live tee at this level.
-- **pipe with a reader thread** (wurlitzer's approach): live data and
-  timestamps; a stalled reader blocks the writer once the pipe buffer (64 KiB
-  on Linux) fills, and a forked child writes into a pipe nobody reads.
+The proxy at descriptor level writes to the borrowed descriptor, so Python
+and C output share one file in write order.
 
-### Q2. Python writes under descriptor capture
+*Cost:* no attribution of Python writes to threads or scopes. Attribution
+into sinks is research topic [R2](#r2).
 
-- **straight from the proxy to the sink** *(recommended)*: Python writes stay
-  attributed and ordered; the descriptor only carries what Python could not
-  see.
-- **through the descriptor**: one byte stream in true write order between
-  Python and C, but no attribution at all, which is pytest's `fd` mode.
+### D4
 
-### Q3. Proxy `fileno()` with no descriptor capture
+**`fileno()` raises at slot level.**
 
-- **return the fallback's descriptor** *(recommended)*: `subprocess`,
-  `faulthandler` and C code keep working (#10693); what they write escapes
-  slot capture, which is honest.
-- **raise `io.UnsupportedOperation`**: what pytest's `sys` mode does; callers
-  break instead of escaping.
+Returning a descriptor would mean creating one and switching to descriptor
+capture behind the user's back, too error-prone for a default.
 
-### Q4. Foreign slot replacement during a scope
+*Cost:* code that passes `sys.stdout` to `subprocess` or `faulthandler` fails
+under slot capture (#10693), as it does in pytest's `sys` mode.
 
-- **tolerate and report** *(recommended)*: O6, plus a diagnostic on the
-  scope saying output went to a foreign object while it was active.
-- **tolerate silently.**
+### D5
 
-### Q5. Flush C stdio on descriptor switches
+**Foreign slot replacement is tolerated and reported** (O4).
 
-- **yes, `fflush(NULL)` via `ctypes` where libc is available**
-  *(recommended)*: C `printf` output buffered before a borrow lands in the
-  right place. Costs a `ctypes` dependency on the path and does nothing on
-  platforms without a findable libc.
-- **no**: C output may appear in the next scope.
+*Cost:* output written to the foreign object is not captured, and a foreign
+object left in the slot at scope exit stays there.
 
-### Q6. stdin in the first cut
+### D6
 
-- **yes, minimal** *(recommended)*: a proxy that raises a clear error on read
-  inside a scope unless the scope supplies input.
-- **defer** until after stdout and stderr work.
+**stdin starts as a minimal proxy** that refuses to read unless given input.
+
+*Cost:* no interactive input inside a scope; suspending capture for a
+debugger is the host's job.
+
+## Research topics
+
+### R1
+
+**A second process as intermediate handler.** A service process that owns the
+capture targets, reads pipes without the deadlock and `fork` hazards of an
+in-process reader thread, timestamps and tees output, and manages simulated
+terminals (ptys), so code under test can see a terminal whose size and
+capabilities the test controls (#11270, #13322). A candidate to build on
+`cot.runsomewhere`.
+
+### R2
+
+**Attribution into sinks.** Recording output as events
+`(source, stream, payload, time, thread, interpreter, scope)` in ordered,
+bounded sinks; routing by thread or task through a `ContextVar` (3.14's
+`thread_inherit_context`); subinterpreters forwarding to the main
+interpreter's sink; forwarding events over runsomewhere channels; and the
+ordering between slot and descriptor events
+([2.4](../research.md#24-threads), #5449,
+[4.2](../research.md#42-building-blocks)).
+
+### R3
+
+**Flushing C stdio on descriptor switches.** Calling `fflush(NULL)` through
+`ctypes` so `printf` output buffered before a borrow lands on the right side
+of it; availability of libc per platform, and what it costs.
+
+Logging, warnings and faulthandler integration get their own documents.
