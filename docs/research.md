@@ -8,7 +8,9 @@ instead of rediscovering them.
 **Goal of cot.capture** (from the project owner): a library of building
 blocks to configure capture at different levels, able to deal with threads,
 subinterpreters and similar, with extra concessions for execnet and
-`cot.runsomewhere`. Section 4 maps the findings onto that goal.
+`cot.runsomewhere`. Section 4 maps the findings onto that goal. Forwarding
+captured output over execnet or runsomewhere was dropped from scope on
+2026-10-05; see [4.3](#43-concessions-for-execnet-and-cotrunsomewhere).
 
 ## Sources and how to read the citations
 
@@ -437,6 +439,11 @@ each as its own building block.
    binding, matching the core/host split of `cot.config.ingest`.
 
 ### 4.3 Concessions for execnet and cot.runsomewhere
+
+**Dropped from scope on 2026-10-05:** forwarding captured output over
+execnet or runsomewhere channels, so the wire-safe events, `forward` sink and
+execnet worker points below are not planned. Protected descriptors are kept
+(design O6).
 
 - **Protected fds.** A worker's protocol may live on dups of fd 0/1 (execnet)
   or move off them before user code runs (runsomewhere). The fd level must

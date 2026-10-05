@@ -17,6 +17,7 @@ from ._errors import (
 )
 from ._proxy import StreamProxy
 from ._scope import ForeignReplacement, Level, Scope, capture
+from ._terminal import TerminalStream, terminal
 
 __all__ = [
     "Annotations",
@@ -32,8 +33,10 @@ __all__ = [
     "SlotReplacedWarning",
     "StdinRefusedError",
     "StreamProxy",
+    "TerminalStream",
     "borrow",
     "capture",
     "protect",
+    "terminal",
     "unprotect",
 ]

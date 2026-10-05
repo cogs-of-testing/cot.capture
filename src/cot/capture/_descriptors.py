@@ -68,6 +68,13 @@ class Borrow:
         return data
 
 
+def uncaptured_dup(fd: int) -> int:
+    """A new descriptor for what ``fd`` pointed at before any borrow of it."""
+    with _lock:
+        stack = _stacks.get(fd)
+        return os.dup(stack[0]._saved if stack else fd)
+
+
 def borrow(fd: int, owner: str) -> Borrow:
     """Redirect ``fd`` to a fresh temporary file on behalf of ``owner``."""
     if not _in_main_interpreter():

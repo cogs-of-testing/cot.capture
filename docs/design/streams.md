@@ -88,8 +88,14 @@ the descriptor table but not Python objects, so the borrow stack lives in one
 interpreter.
 
 **O8. The library writes only where it was told to.** It never prints on its
-own account; write-back (O3) is the one path to a real stream, and only when
-requested.
+own account; write-back (O3) and terminal streams (O9) reach a real stream
+only when the caller writes to them.
+
+**O9. Terminal streams are never captured and never closed.** A tool that
+draws on the terminal while capture runs (pytest's `TerminalWriter`, `rich`,
+live logging, tee) gets a [terminal stream](#terminal-streams) that always
+reaches the uncaptured output, whatever scopes are active, and stays valid
+for the life of the interpreter.
 
 ## Proxies
 
@@ -118,6 +124,31 @@ what arrived as bytes when it ends, decoded with the replaced stream's
 encoding and `errors="replace"`. Python writes reach the same file through
 the descriptor-level proxy ([D3](#d3)), so the result is one byte stream in
 write order, without attribution.
+
+## Terminal streams
+
+`terminal("stdout")` and `terminal("stderr")` return the interpreter's
+terminal stream for that output, created on first request and the same object
+afterwards.
+
+- **Backing.** A private `dup` of the *uncaptured* descriptor: if fd 1 is
+  borrowed at the time of the first request, the dup is taken from the
+  bottom borrow's saved copy, otherwise from fd 1 itself. Later borrows
+  redirect fd 1, not the dup, so the stream keeps reaching the terminal.
+- **Fallback.** If the descriptor is invalid (no console, closed fd), the
+  stream writes to the slot's original object (`sys.__stdout__`); if that is
+  `None` too, it discards. If a write or flush fails (closed descriptor,
+  broken pipe), the stream records the error in `failure` and discards from
+  then on. Writing never raises.
+- **Attributes.** `fileno()` is the private dup, so `isatty()`, terminal
+  size queries and colour detection see the real terminal. `encoding` and
+  `errors` come from `sys.__stdout__`, defaulting to UTF-8.
+- **Lifetime.** `close()` does nothing; the dup is released at interpreter
+  exit. Writes go through unbuffered (`write_through`), so they interleave
+  with captured output in real time.
+- **Limits.** Whatever redirected fd 1 *before* cot.capture first borrowed it
+  (pytest's own capture, a shell redirect) counts as the terminal. A host
+  that knows better passes its own stream to its tools instead.
 
 ## Scopes
 
@@ -189,6 +220,18 @@ object left in the slot at scope exit stays there.
 *Cost:* no interactive input inside a scope; suspending capture for a
 debugger is the host's job.
 
+### D7
+
+**Tools that draw on the terminal get a terminal stream, not the current
+`sys.stdout`** (O9).
+
+Live logging, tee and progress output need a target that is valid whether or
+not capture is active and survives every scope. Holding `sys.stdout` breaks
+on the first scope (#5502); a dup of the uncaptured descriptor does not.
+
+*Cost:* one extra descriptor per stream per interpreter for its lifetime, and
+an fd-level redirect made before cot.capture is taken for the terminal.
+
 ## Research topics
 
 ### R1
@@ -206,7 +249,7 @@ capabilities the test controls (#11270, #13322). A candidate to build on
 `(source, stream, payload, time, thread, interpreter, scope)` in ordered,
 bounded sinks; routing by thread or task through a `ContextVar` (3.14's
 `thread_inherit_context`); subinterpreters forwarding to the main
-interpreter's sink; forwarding events over runsomewhere channels; and the
+interpreter's sink; and the
 ordering between slot and descriptor events
 ([2.4](../research.md#24-threads), #5449,
 [4.2](../research.md#42-building-blocks)).
