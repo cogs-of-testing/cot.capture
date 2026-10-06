@@ -246,13 +246,7 @@ class CotCapture:
                 self.files = None
 
     def _wrap(self, item: pytest.Item, when: str):
-        scope = capture(
-            stdout=self.level,
-            stderr=self.level,
-            stdin=True,
-            name=f"{item.nodeid}::{when}",
-            files=self.files,
-        )
+        scope = capture(stdout=self.level, stderr=self.level, stdin=True, name=f"{item.nodeid}::{when}", files=self.files)
         try:
             with scope:
                 return (yield)
