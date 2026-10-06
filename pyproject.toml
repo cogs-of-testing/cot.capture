@@ -6,6 +6,8 @@ requires = [ "hatch-vcs", "hatchling" ]
 name = "cot-capture"
 description = "building blocks for capturing output at the slot and file descriptor level"
 readme = "README.md"
+license = "MIT"
+license-files = [ "LICENSE" ]
 authors = [
   { name = "Ronny Pfannschmidt", email = "opensource@ronnypfannschmidt.de" },
 ]
@@ -43,6 +45,7 @@ ini_options.testpaths = [ "testing" ]
 ini_options.filterwarnings = [ "error" ]
 
 [tool.mypy]
+files = [ "src" ]
 strict = true
 mypy_path = "src"
 namespace_packages = true

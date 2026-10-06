@@ -497,28 +497,42 @@ print(sys.flags.context_aware_warnings, sys.flags.thread_inherit_context)
 
 # a warning from a thread started before catch_warnings
 started, warned = threading.Event(), threading.Event()
+
+
 def other():
-    started.wait(); warnings.warn("other"); warned.set()
-t = threading.Thread(target=other); t.start()
+    started.wait()
+    warnings.warn("other")
+    warned.set()
+
+
+t = threading.Thread(target=other)
+t.start()
 with warnings.catch_warnings(record=True) as log:
     warnings.simplefilter("always")
-    started.set(); warned.wait()
+    started.set()
+    warned.wait()
 t.join()
 print("pre-started thread recorded:", any("other" in str(w.message) for w in log))
 
 # a warning from a thread started inside catch_warnings
 with warnings.catch_warnings(record=True) as log:
     warnings.simplefilter("always")
-    t = threading.Thread(target=lambda: warnings.warn("child")); t.start(); t.join()
+    t = threading.Thread(target=lambda: warnings.warn("child"))
+    t.start()
+    t.join()
 print("child thread recorded:", any("child" in str(w.message) for w in log))
 
 # subinterpreter: own sys and warnings, shared fds
 interp = interpreters.create()
-interp.exec("import sys, warnings; print(sys.stdout is sys.__stdout__, len(warnings.filters))")
+interp.exec(
+    "import sys, warnings; print(sys.stdout is sys.__stdout__, len(warnings.filters))"
+)
 tmp, saved = tempfile.TemporaryFile(), os.dup(1)
-sys.stdout.flush(); os.dup2(tmp.fileno(), 1)
+sys.stdout.flush()
+os.dup2(tmp.fileno(), 1)
 interp.exec("print('subinterp-out', flush=True)")
-os.dup2(saved, 1); tmp.seek(0)
+os.dup2(saved, 1)
+tmp.seek(0)
 print("fd capture saw subinterpreter:", b"subinterp-out" in tmp.read())
 interp.close()
 ```
