@@ -131,6 +131,9 @@ class TerminalStream(io.TextIOBase):
                     break
         except OSError as exc:
             self.failure = exc
+        if line.endswith(b"\r\n"):
+            # a Windows console line reads as "\n" (D11)
+            del line[-2]
         return line.decode(self._encoding, self._errors)
 
     def read(self, size: int | None = -1) -> str:

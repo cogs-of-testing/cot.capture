@@ -317,6 +317,20 @@ at exit, and the process exits with status 120.
 write-back is lost, and a terminal stream in a process without a usable
 descriptor shows nothing; the warnings are what remains.
 
+### D11
+
+**Captured text and terminal stdin read `\r\n` as `\n`.** Descriptor
+capture decodes the captured bytes and replaces every `\r\n` with `\n`; the
+terminal stdin stream does the same at the end of each line it returns.
+
+On Windows, Python's text streams and C runtimes write `\r\n`, and the
+console returns it, so without this the same test reads differently per
+platform. pytest's `capfd` translates too. A lone `\r` (a progress bar
+redrawing its line) is kept.
+
+*Cost:* a `\r\n` written on purpose reads back as `\n`; the raw bytes are
+not available through the scope.
+
 ## Research topics
 
 ### R1

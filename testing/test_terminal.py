@@ -205,6 +205,24 @@ def test_stdin_reads_lines_and_is_not_writable(tmp_path: Path) -> None:
     assert result.stdout == "'one\\n' 'tw' 'o\\nthree\\n'\nUnsupportedOperation\n"
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="text-mode input doubles the \\r; the test above covers Windows",
+)
+def test_stdin_reads_windows_line_endings_as_newlines() -> None:
+    """D11."""
+    result = _run(
+        """
+        from cot.capture import terminal
+        with terminal("stdin") as tin:
+            print(repr(tin.readline()), repr(tin.readline()))
+        """,
+        input="one\r\ntwo\r",
+        capture_output=True,
+    )
+    assert result.stdout == "'one\\n' 'two\\r'\n"
+
+
 def test_stdin_after_close_warns_and_reads_nothing(tmp_path: Path) -> None:
     result = _run(
         """

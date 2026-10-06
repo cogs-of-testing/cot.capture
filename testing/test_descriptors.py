@@ -31,6 +31,13 @@ def test_python_writes_go_through_the_descriptor_in_order() -> None:
     assert scope.out == "one\ntwo\nthree\n"
 
 
+def test_windows_line_endings_read_as_newlines() -> None:
+    """D11: \\r\\n becomes \\n; a lone \\r stays."""
+    with capture(stdout="fd", stderr=None) as scope:
+        os.write(1, b"a\r\nb\rc\n")
+    assert scope.out == "a\nb\rc\n"
+
+
 def test_fileno_is_the_borrowed_descriptor() -> None:
     with capture(stdout="fd", stderr=None):
         assert sys.stdout.fileno() == 1

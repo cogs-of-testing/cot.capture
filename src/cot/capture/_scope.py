@@ -216,7 +216,9 @@ class Scope:
             target.flush()
             target.close()
             data = item.borrow.give_back()
-            self._captured[item.slot] = data.decode(item.proxy.encoding, "replace")
+            text = data.decode(item.proxy.encoding, "replace")
+            # Windows line endings read as "\n", as pytest's capfd does (D11)
+            self._captured[item.slot] = text.replace("\r\n", "\n")
         else:
             assert isinstance(target, io.StringIO)
             self._captured[item.slot] = target.getvalue()
