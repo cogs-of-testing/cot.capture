@@ -17,8 +17,19 @@ PyPI knows this repository as the publisher of `cot-capture`:
 
 ## Each release
 
-1. Update `CHANGELOG.md` on `main`, if the project keeps one.
-2. Tag the commit on `main` and push the tag:
+1. Every change a user would notice adds a fragment to `changelog.d/`
+   (`changelog.d/README.md` lists the types and the bump each causes).
+2. Each push to `main` with fragments refreshes the pull request
+   "Release vX.Y.Z" from `release/main`
+   (`.github/workflows/release-proposal.yml`): the fragments rendered into
+   `CHANGELOG.md` by towncrier, the version from
+   `towncrier-fragments-zerover`. CI does not run on that pull request,
+   because GitHub does not start workflows for one opened by `GITHUB_TOKEN`.
+3. Merging it creates the tag `vX.Y.Z` and the GitHub release on the merge
+   commit and starts `release.yml` on the tag
+   (`.github/workflows/release-tag.yml`).
 
-       git tag vX.Y.Z
-       git push origin vX.Y.Z
+Pushing a `vX.Y.Z` tag by hand still releases that commit.
+
+The proposal needs the repository setting "Allow GitHub Actions to create
+and approve pull requests" (Settings, Actions, General).
