@@ -78,8 +78,7 @@ class StreamProxy(io.TextIOBase):
                 break
             seen.add(id(obj))
             obj = obj._replaced
-        if obj is None:
-            obj = getattr(sys, f"__{self._slot}__")
+        # A dead end raises rather than reaching for sys.__stdout__ (D10).
         if obj is None:
             raise ProxyExpiredError(
                 f"no write-back target for {self.annotations.describe()}"

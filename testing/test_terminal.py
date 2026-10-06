@@ -126,9 +126,10 @@ def test_repeated_sessions_leak_no_descriptors() -> None:
     assert _open_fds() == before
 
 
-def test_use_after_close_warns_and_goes_to_the_original(
+def test_use_after_close_warns_and_discards(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Never ``sys.__stdout__`` (D10)."""
     original = io.StringIO()
     monkeypatch.setattr(sys, "__stdout__", original)
     term = terminal("stdout", owner="gone")
@@ -136,7 +137,7 @@ def test_use_after_close_warns_and_goes_to_the_original(
     with pytest.warns(TerminalClosedWarning, match="owned by 'gone'") as record:
         term.write("late\n")
     assert record[0].filename == __file__
-    assert original.getvalue() == "late\n"
+    assert original.getvalue() == ""
 
 
 def test_unclosed_stream_warns_and_releases_on_collection() -> None:
@@ -204,7 +205,7 @@ def test_stdin_reads_lines_and_is_not_writable(tmp_path: Path) -> None:
     assert result.stdout == "'one\\n' 'tw' 'o\\nthree\\n'\nUnsupportedOperation\n"
 
 
-def test_stdin_after_close_warns_and_reads_the_original(tmp_path: Path) -> None:
+def test_stdin_after_close_warns_and_reads_nothing(tmp_path: Path) -> None:
     result = _run(
         """
         import warnings
@@ -219,4 +220,4 @@ def test_stdin_after_close_warns_and_reads_the_original(tmp_path: Path) -> None:
         input="from original\n",
         capture_output=True,
     )
-    assert result.stdout == "'from original\\n' TerminalClosedWarning True\n"
+    assert result.stdout == "'' TerminalClosedWarning True\n"

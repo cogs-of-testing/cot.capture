@@ -44,9 +44,10 @@ class TerminalStream(io.TextIOBase):
         try:
             fd = uncaptured_dup(_FDS[name])
         except OSError:
-            # No usable descriptor: fall back to the original object, and
-            # discard (or read end of file) if even that fails.
-            self._out = original
+            # No usable descriptor: discard (or read end of file). Never the
+            # original object: descriptor capture redirects what it writes
+            # to, and its buffer outlives the stream (D10).
+            pass
         else:
             self._fd = fd
             if name != "stdin":
@@ -69,12 +70,10 @@ class TerminalStream(io.TextIOBase):
         if self.closed_at is None:
             return self._out
         warnings.warn(
-            TerminalClosedWarning(
-                f"{op} on closed {self.describe()}; using sys.__{self._name}__ instead"
-            ),
+            TerminalClosedWarning(f"{op} on closed {self.describe()}; discarded"),
             stacklevel=3,
         )
-        return getattr(sys, f"__{self._name}__")  # type: ignore[no-any-return]
+        return None
 
     def write(self, s: str) -> int:
         if self._name == "stdin":
@@ -114,15 +113,11 @@ class TerminalStream(io.TextIOBase):
         if self._name != "stdin":
             raise io.UnsupportedOperation(f"{self.describe()} is not readable")
         limit = -1 if size is None else size
-        if self.closed_at is not None or self._fd is None:
-            fallback = self._target("readline") if self.closed_at is not None else self._out
-            if fallback is None:
-                return ""
-            try:
-                return fallback.readline(limit)
-            except (OSError, ValueError) as exc:
-                self.failure = exc
-                return ""
+        if self.closed_at is not None:
+            self._target("readline")
+            return ""
+        if self._fd is None:
+            return ""
         # Byte by byte, so nothing after the line is taken from the terminal
         # and lost when the stream is closed.
         line = bytearray()
@@ -150,7 +145,7 @@ class TerminalStream(io.TextIOBase):
         return self.closed_at is not None
 
     def close(self) -> None:
-        """Release the descriptor. Later writes warn and go to ``sys.__stdout__``."""
+        """Release the descriptor. Later writes warn and are discarded."""
         self._release(Location.here(1))
 
     def _release(self, where: Location) -> None:

@@ -58,13 +58,16 @@ def test_expired_error_fits_closed_files_and_descriptors() -> None:
 
 
 def test_write_back_without_a_target_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dead end never reaches for ``sys.__stdout__`` (D10)."""
+    original = io.StringIO()
+    monkeypatch.setattr(sys, "__stdout__", original)
     monkeypatch.setattr(sys, "stdout", None)
-    monkeypatch.setattr(sys, "__stdout__", None)
     kept, _ = _misplace(write_back=True, stderr=None)
     with pytest.warns(ProxyExpiredWarning):
         with pytest.raises(ProxyExpiredError, match="no write-back target") as info:
             kept.write("late")
     assert info.value.errno == errno.EBADF
+    assert original.getvalue() == ""
 
 
 def test_write_back_goes_to_the_current_slot() -> None:

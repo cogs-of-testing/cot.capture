@@ -56,7 +56,8 @@ caller's location. What happens to the data next is chosen per proxy:
   target, by default whatever the slot holds at the time of the write (for
   `sys.stdout`, the current `sys.stdout`). If that is a closed proxy, the
   data goes to what that proxy replaced, and so on; a cycle or a dead end
-  ends at the slot's original object (`sys.__stdout__`). A live proxy of
+  finds no target. The slot's original object (`sys.__stdout__`) is never
+  a fallback ([D10](#d10)). A live proxy of
   another scope is a normal target, so write-back output is captured by
   whichever scope is current.
 - otherwise, or when write-back finds no target: the operation raises
@@ -150,13 +151,14 @@ context manager.
 - **Closing** releases the dup. Every stream holds exactly one, so a session
   that closes what it obtained leaves the descriptor table as it found it.
 - **After closing**, writes and flushes emit a `TerminalClosedWarning` naming
-  the owner and where the stream was created and closed, then go to the
-  slot's original object (`sys.__stdout__`), so a misplaced reference stays
-  visible without holding a descriptor.
+  the owner and where the stream was created and closed, and are
+  discarded ([D10](#d10)). The warning keeps a misplaced reference visible
+  without holding a descriptor.
 - **Never closed**: when an open stream is garbage-collected, it emits a
   `ResourceWarning` and releases its dup, like an unclosed file.
-- **Fallback.** If the descriptor is invalid (no console, closed fd), the
-  stream writes to `sys.__stdout__`; if that is `None` too, it discards. If a
+- **No descriptor.** If the descriptor is invalid (no console, closed fd),
+  the stream discards, and the stdin stream reads end of file
+  ([D10](#d10)). If a
   write or flush fails (closed descriptor, broken pipe), the stream records
   the error in `failure` and discards from then on. Writing never raises.
 - **Attributes.** `fileno()` is the private dup, so `isatty()`, terminal
@@ -169,7 +171,7 @@ context manager.
   from the terminal beyond what it returns, and closing it loses nothing
   that `sys.__stdin__` or a child would have read next. End of file or a
   failed read returns `""` and records the error in `failure`; after
-  closing, reads warn and come from `sys.__stdin__`.
+  closing, reads warn and return `""`.
 - **Debuggers.** A debugger inside a scope gets a terminal stdin and stdout,
   for example `pdb.Pdb(stdin=terminal("stdin"), stdout=terminal("stdout"))`;
   the scope's proxies and borrows stay in place ([D9](#d9)).
@@ -297,6 +299,23 @@ terminal stream. A debugger has to be constructed with terminal streams
 for stdin and stdout; one that reads `sys.stdin` itself gets the scope's
 stdin proxy. Output the debugged code writes while stopped is captured,
 like the rest of the scope.
+
+### D10
+
+**No stream ever falls back to the slot's original object** (`sys.__stdout__`,
+`sys.__stderr__`, `sys.__stdin__`). A terminal stream without a descriptor,
+or used after closing, discards (or reads end of file); a write-back that
+finds no target raises ([D2](#d2)).
+
+The original object writes to fd 1, which descriptor capture redirects, so
+output sent there lands in whatever scope holds the descriptor, not where
+the fallback meant it to go. Its buffer also outlives the stream: text
+written to it with fd 1 closed fails again when the interpreter flushes it
+at exit, and the process exits with status 120.
+
+*Cost:* output written through a misplaced terminal stream or a dead-end
+write-back is lost, and a terminal stream in a process without a usable
+descriptor shows nothing; the warnings are what remains.
 
 ## Research topics
 
