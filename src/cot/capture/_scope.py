@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import dataclasses
 import io
 import sys
@@ -73,6 +74,7 @@ class _Installed:
     replaced: object
     target: TextIO | None
     borrow: Borrow | None
+    decoder: codecs.IncrementalDecoder | None = None
 
 
 class Scope:
@@ -108,13 +110,51 @@ class Scope:
 
     @property
     def out(self) -> str:
-        """What was captured from stdout; complete once the scope ended."""
+        """What was captured from stdout; complete once the scope ended.
+
+        After :meth:`take`, only what arrived after the last call.
+        """
         return self._captured.get("stdout", "")
 
     @property
     def err(self) -> str:
-        """What was captured from stderr; complete once the scope ended."""
+        """What was captured from stderr; complete once the scope ended.
+
+        After :meth:`take`, only what arrived after the last call.
+        """
         return self._captured.get("stderr", "")
+
+    def take(self) -> tuple[str, str]:
+        """Return and drop what stdout and stderr captured so far.
+
+        The scope stays active, so a host can split one scope into parts,
+        such as the phases of a test, without replacing its proxies.
+        """
+        taken = {"stdout": "", "stderr": ""}
+        for item in self._installed:
+            if item.target is not None:
+                taken[item.slot] = self._read(item, final=False)
+        return taken["stdout"], taken["stderr"]
+
+    def _read(self, item: _Installed, *, final: bool) -> str:
+        target = item.target
+        assert target is not None
+        if item.borrow is not None:
+            assert item.decoder is not None
+            target.flush()
+            if final:
+                target.close()
+                data = item.borrow.give_back()
+            else:
+                data = item.borrow.read_new()
+            text = item.decoder.decode(data, final=final)
+            # Windows line endings read as "\n", as pytest's capfd does (D11)
+            return text.replace("\r\n", "\n")
+        assert isinstance(target, io.StringIO)
+        text = target.getvalue()
+        target.seek(0)
+        target.truncate()
+        return text
 
     def proxy(self, slot: str) -> StreamProxy:
         for item in self._installed:
@@ -154,6 +194,7 @@ class Scope:
                 write_through=True,
             )
             self._install_proxy(slot, target, b, fd, here)
+            self._installed[-1].decoder = codecs.getincrementaldecoder(encoding)("replace")
         else:
             self._install_proxy(slot, io.StringIO(), None, None, here)
 
@@ -209,19 +250,8 @@ class Scope:
             self._collect(item)
 
     def _collect(self, item: _Installed) -> None:
-        target = item.target
-        if target is None:
-            return
-        if item.borrow is not None:
-            target.flush()
-            target.close()
-            data = item.borrow.give_back()
-            text = data.decode(item.proxy.encoding, "replace")
-            # Windows line endings read as "\n", as pytest's capfd does (D11)
-            self._captured[item.slot] = text.replace("\r\n", "\n")
-        else:
-            assert isinstance(target, io.StringIO)
-            self._captured[item.slot] = target.getvalue()
+        if item.target is not None:
+            self._captured[item.slot] = self._read(item, final=True)
 
 
 def _flush(stream: object) -> None:

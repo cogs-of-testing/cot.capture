@@ -188,6 +188,11 @@ checks for foreign replacement (O4) and makes the captured text available.
 Scopes nest: an inner scope installs over the outer one's proxy and restores
 it on exit.
 
+`take()` returns and drops what a live scope captured so far, and the scope
+stays in place with the same proxies ([D12](#d12)). A host splits one scope
+into parts this way, such as the setup, call and teardown of one test; what
+arrives after the last `take()` is the scope's text when it ends.
+
 A scope is never suspended ([D9](#d9)). Whatever must reach the terminal
 while a scope is active (a debugger, progress output, live logging) writes
 to a [terminal stream](#terminal-streams).
@@ -330,6 +335,21 @@ redrawing its line) is kept.
 
 *Cost:* a `\r\n` written on purpose reads back as `\n`; the raw bytes are
 not available through the scope.
+
+### D12
+
+**A host splits one scope with `take()` rather than running one scope per
+part.** The pytest binding runs one scope per test and takes the text at the
+end of each phase.
+
+`capsys` and `capfd` save `sys.stdout` when they start in setup and put it
+back in teardown. With a scope per phase, the proxy they put back belongs to
+a scope that has ended, so the teardown scope finds a foreign object in its
+slot (O4) and nothing is captured after the fixture ends. A live split also
+reads in place, without creating a borrow per part.
+
+*Cost:* a reference kept from setup into call is still live and does not
+warn; only a reference kept past the whole test does.
 
 ## Research topics
 

@@ -69,11 +69,16 @@ class CaptureFile:
         self.holder = holder
         return self._file.seek(0, os.SEEK_END)
 
-    def _release(self, start: int) -> bytes:
+    def _read_from(self, start: int) -> bytes:
         assert self._file is not None
-        self.holder = None
+        # fd 1 shares this file's offset: reading to the end leaves it where
+        # the next write appends
         self._file.seek(start)
         return self._file.read()
+
+    def _release(self, start: int) -> bytes:
+        self.holder = None
+        return self._read_from(start)
 
     def close(self) -> None:
         """Delete the file. Refused while a borrow writes to it."""
@@ -114,6 +119,17 @@ class Borrow:
                 self._file.close()
             raise
         self._returned = False
+        self._cursor = self._start
+
+    def read_new(self) -> bytes:
+        """What arrived since the borrow started or since the last call.
+
+        The borrow stays in place; :meth:`give_back` returns only what
+        arrived after the last call.
+        """
+        data = self._file._read_from(self._cursor)
+        self._cursor += len(data)
+        return data
 
     def give_back(self) -> bytes:
         """Restore the descriptor and return what arrived on it."""
@@ -128,7 +144,7 @@ class Borrow:
             os.dup2(self._saved, self.fd)
             os.close(self._saved)
             self._returned = True
-        data = self._file._release(self._start)
+        data = self._file._release(self._cursor)
         if self._own_file:
             self._file.close()
         return data
