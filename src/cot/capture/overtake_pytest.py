@@ -23,7 +23,10 @@ What differs from pytest (docs/research-pytest-replacement.md):
 - nothing is suspended (design D9): pdb gets terminal streams, and so does
   pytest's terminal writer under fd capture, so live logging and
   ``--setup-show`` reach the terminal while a scope is active;
-- ``capsys.disabled()`` does not reach the terminal, its output is captured.
+- ``capsys.disabled()`` (and whatever else calls the capture manager's
+  ``global_and_fixture_disabled()``) points ``sys.stdout`` and ``sys.stderr``
+  at terminal streams instead of suspending; ``os.write`` to descriptors 1
+  and 2 inside it stays captured under fd capture.
 
 This module imports pytest; the rest of cot.capture never does.
 """
@@ -31,9 +34,9 @@ This module imports pytest; the rest of cot.capture never does.
 from __future__ import annotations
 
 import sys
-from collections.abc import Generator, Iterator
-from contextlib import contextmanager
-from typing import Any
+from collections.abc import Callable, Generator, Iterator
+from contextlib import AbstractContextManager, contextmanager
+from typing import Any, Literal
 
 import pytest
 
@@ -76,6 +79,7 @@ class _Capture:
         self._pdb_streams: list[TerminalStream] = []
         self._writer: Any = None
         self._writer_file: Any = None
+        self._terminals: dict[str, TerminalStream] = {}
 
     def scope(self, name: str) -> Scope:
         return capture(
@@ -90,6 +94,8 @@ class _Capture:
 
     def close(self) -> None:
         self._close_pdb_streams()
+        while self._terminals:
+            self._terminals.popitem()[1].close()
         if self._writer is not None:
             stream = self._writer._file
             self._writer._file = self._writer_file
@@ -105,6 +111,15 @@ class _Capture:
 
     @pytest.hookimpl(trylast=True)
     def pytest_configure(self, config: pytest.Config) -> None:
+        if self.level is None:
+            return
+        capman = config.pluginmanager.get_plugin("capturemanager")
+        if capman is not None:
+            # capsys.disabled() and friends call this to reach the terminal;
+            # pytest's version suspends a capture that is idle here
+            capman.global_and_fixture_disabled = self._disabled(
+                capman.global_and_fixture_disabled
+            )
         if self.level != "fd":
             return
         # Under fd capture the terminal writer's stream writes to fd 1, which
@@ -115,6 +130,36 @@ class _Capture:
         writer = config.get_terminal_writer()
         self._writer, self._writer_file = writer, writer._file
         writer._file = terminal("stdout", owner="pytest's terminal writer")
+
+    def _disabled(
+        self, original: Callable[[], AbstractContextManager[None]]
+    ) -> Callable[[], AbstractContextManager[None]]:
+        @contextmanager
+        def disabled() -> Iterator[None]:
+            # pytest's part first: it puts sys.stdout back from capsys
+            with original():
+                if self._test is None:
+                    yield
+                    return
+                streams = {name: self._terminal(name) for name in ("stdout", "stderr")}
+                saved = {name: getattr(sys, name) for name in streams}
+                for name, stream in streams.items():
+                    setattr(sys, name, stream)
+                try:
+                    yield
+                finally:
+                    for name, stream in streams.items():
+                        stream.flush()
+                        if getattr(sys, name) is stream:
+                            setattr(sys, name, saved[name])
+
+        return disabled
+
+    def _terminal(self, name: Literal["stdout", "stderr"]) -> TerminalStream:
+        # one per stream for the session: live logging calls this per record
+        if name not in self._terminals:
+            self._terminals[name] = terminal(name, owner="capsys.disabled()")
+        return self._terminals[name]
 
     # -- collection and tests -----------------------------------------------
 
