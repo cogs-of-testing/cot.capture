@@ -179,3 +179,26 @@ def test_live_logging_reaches_the_terminal(pytester: pytest.Pytester) -> None:
     result.stdout.fnmatch_lines(["*WARNING*live record*"])
     result.stdout.no_fnmatch_line("*Captured*")
     assert result.ret == 0
+
+
+def test_capsys_disabled_reaches_the_terminal(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+        import sys
+
+        def test_disabled(capsys):
+            print("captured before")
+            with capsys.disabled():
+                print("to the terminal")
+                sys.stderr.write("err to the terminal\\n")
+            print("captured after")
+            assert capsys.readouterr().out == "captured before\\ncaptured after\\n"
+            assert False
+        """
+    )
+    result = run(pytester)
+    out = result.stdout.str()
+    assert "to the terminal" in out.split("FAILURES")[0]
+    assert "err to the terminal" in result.stderr.str() + out.split("FAILURES")[0]
+    section = out.split("Captured stdout call")[-1] if "Captured stdout call" in out else ""
+    assert "to the terminal" not in section
