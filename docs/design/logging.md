@@ -1,8 +1,7 @@
 # Logging
 
 How a scope captures `logging` records. Issue #7. This is a design draft. The
-pull request that carries it grows into the implementation, and the
-[open questions](#open-questions) must be settled before the code is written.
+pull request that carries it grows into the implementation.
 Section numbers in brackets point into [the research](../research.md). Rules
 O1 to O9 and decisions D1 to D12 are in [streams.md](streams.md).
 
@@ -49,12 +48,28 @@ proxies do ([Scopes](streams.md#scopes)). The router is annotated like a proxy
 reports a `ForeignReplacement` (O4); `logging.config.dictConfig` with
 `disable_existing_loggers` or a reset of the root handlers does this.
 
-The router is a handler. It is attached the way pytest does it since #3697
-(pytest 9.1): to the root logger, and to every logger that is non-propagating
-at that moment, since their records never reach the root. Each scope entry
-scans again and attaches to loggers that have turned non-propagating since,
-so only a logger that turns non-propagating while a scope is active is
-missed. Because it is a handler, the loggers' own filters apply as usual.
+The router is a handler, attached the way pytest PR #15138 does it (Ronny's
+fix for pytest #15064, open on 2026-10-08):
+
+- The router itself sits on the root logger.
+- Each logger that is non-propagating when a scope is entered gets a small
+  **stand-in** handler instead of the router. At emit time the stand-in
+  walks up from its logger while `propagate` is true. It forwards to the
+  router only if that walk ends below the root, at a logger that nothing
+  else delivers on. Otherwise the root, or a stand-in further up, delivers
+  the record. Each record therefore reaches the router once, even after a
+  logger starts propagating again in the middle of a scope (the duplicate
+  in #15064, which came from attaching the handler itself, #14375).
+- The router's level and filters apply exactly once. The stand-in has none
+  of its own. It overrides `handle()`, not `emit()`, and takes no lock, as
+  `logging.NullHandler` does.
+- Each scope entry scans again. On exit, only what was added is removed.
+
+The known gap is shared with pytest: a logger that turns non-propagating
+while a scope is active is missed, unless a logger at or below it was
+already non-propagating when the scope was entered. Keeping stand-ins on
+every logger would close the gap, but it cost 1.4 to 1.5 times as much per
+emitted record in #15138's measurements.
 
 **L3. Records, not text.** A scope keeps the `LogRecord`s it captured and
 nothing else ([LD2](#ld2)). How they are formatted is up to the host. A record already carries its thread name
@@ -137,13 +152,6 @@ holds (#8307, #9215).
 *Cost:* records that were thrown away are gone. A report can't show them,
 and a `caplog` read after the decision finds nothing. The decision is made
 per batch, so the memory a single long phase uses is bounded only by a cap.
-
-## Open questions
-
-1. **pytest's more recent logging PR.** The attachment in L2 follows #3697.
-   There is a more recent pytest PR with more detailed logging handling
-   (Ronny, 2026-10-08), and this design should follow it once it has been
-   read.
 
 ## The pytest binding
 
