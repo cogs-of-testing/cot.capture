@@ -149,17 +149,17 @@ to run. With collection, every scope end pays for a full collection.
 1. **The pytest binding's default `GCPolicy`.** It could match pytest
    (session end only), or collect at the end of each test so that unraisable
    exceptions are attributed to the test that made the garbage.
-2. **`recwarn`, `pytest.warns` and `pytest.deprecated_call`.** Leave them on
-   pytest's nested `catch_warnings` (W2 makes them invisible to the scope,
-   as today), or rebuild them on scopes so they gain WD1's behaviour on
-   threads?
-3. **Taking the plugin name `warnings`.** pytest core wraps
-   `pytest_configure` in a process-global `catch_warnings` only if a plugin
-   named `warnings` is registered
-   ([replacement research 4.3](../research-pytest-replacement.md#43-warnings-warnings-and-recwarn)).
-   Should the binding register under that name to keep `-W error` during
-   configure, or leave pytest's plugin registered and replace only the
-   recording?
+2. **Filters and the future warnings package.** General warning filtering
+   and interaction will get a package of its own (Ronny, 2026-10-08). Do the
+   scope's `filters=` (W1, WD2) and the binding's handling of `-W` and
+   `filterwarnings` move there too, with cot.capture only recording?
+
+## Not here
+
+`recwarn`, `pytest.warns` and `pytest.deprecated_call` need their own
+planning. They move once general warning filtering and interaction has its
+own package (Ronny, 2026-10-08). Until then they stay on pytest's nested
+`catch_warnings`, and W2 describes how they interact with a scope.
 
 ## The pytest binding
 
@@ -189,6 +189,12 @@ plugins, the cot.capture part:
   `PytestUnhandledThreadExceptionWarning` from the other two record kinds
   (W5), so `-W error` turns them into failures as it does today;
 - sets the scopes' `GCPolicy` (WD3).
+
+cot.pytest provides replacement objects wherever pytest or a plugin looks up
+the old plugin by name. One example is `warnings`: pytest core wraps
+`pytest_configure` in a process-global `catch_warnings` only if a plugin of
+that name is registered
+([replacement research 4.3](../research-pytest-replacement.md#43-warnings-warnings-and-recwarn)).
 
 ## Appendix: probe
 
