@@ -1,1 +1,0 @@
-Add `docs/examples.md`: what cot.capture is for, the library used directly, and the same tests run under pytest's builtin capture and under `-p cot.capture.overtake_pytest`, with their real output. Every example on the page is executed by the test suite.
