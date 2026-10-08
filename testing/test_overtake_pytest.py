@@ -140,6 +140,56 @@ def test_kept_stdout_warns_in_the_next_test(pytester: pytest.Pytester) -> None:
     result = run(pytester, "-rA")
     result.stdout.fnmatch_lines(["*ProxyExpiredWarning*test_keep*", "*- Captured stdout call -*", "late"])
     assert result.ret == 0
+    # the scope is the binding's, so the warning names the test's lifetime,
+    # not a file and line inside the binding
+    result.stdout.fnmatch_lines(
+        [
+            "*: ProxyExpiredWarning: write on closed proxy for sys.stdout owned by "
+            "'test_kept_stdout_warns_in_the_next_test.py::test_keep', "
+            "installed before setup, closed after teardown"
+        ]
+    )
+    result.stdout.no_fnmatch_line("*overtake_pytest.py*")
+
+
+def test_kept_stdout_from_collection_names_collection(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+        import sys
+
+        kept = sys.stdout
+
+        def test_use():
+            kept.write("late\\n")
+        """
+    )
+    result = run(pytester)
+    result.stdout.fnmatch_lines(
+        [
+            "*ProxyExpiredWarning: write on closed proxy for sys.stdout owned by "
+            "'test_kept_stdout_from_collection_names_collection.py::collect', "
+            "installed before collection, closed after collection"
+        ]
+    )
+
+
+def test_kept_stdout_from_a_conftest_names_conftest_loading(pytester: pytest.Pytester) -> None:
+    pytester.makeconftest("import sys\n\nkept = sys.stdout\n")
+    pytester.makepyfile(
+        """
+        from conftest import kept
+
+        def test_use():
+            kept.write("late\\n")
+        """
+    )
+    result = run(pytester)
+    result.stdout.fnmatch_lines(
+        [
+            "*ProxyExpiredWarning: write on closed proxy for sys.stdout owned by "
+            "'conftest', installed before loading conftests, closed after loading conftests"
+        ]
+    )
 
 
 def test_stdin_is_refused(pytester: pytest.Pytester) -> None:

@@ -44,9 +44,13 @@ gets back what it held before. A proxy is never reused by a later scope.
 
 **O2. Proxies carry their history.** Each proxy is annotated with the slot it
 was made for, its owner (the scope's name), and where and when it was
-installed and closed (code location and monotonic time). Every warning and
-error about a proxy names these, so a misplaced reference can be traced to
-whoever kept it (#5743).
+installed and closed (code location and monotonic time). The location is the
+code that entered or left the scope, past `contextlib` and cot.capture's own
+frames. A host that enters and leaves scopes from its own machinery labels
+where in its run that happens instead (the pytest binding: "before setup",
+"after teardown"), since its own file and line would name nothing useful.
+Every warning and error about a proxy names these, so a misplaced reference
+can be traced to whoever kept it (#5743).
 
 **O3. Use after the lifetime warns.** Writing to, flushing or reading from a
 closed proxy emits a `ProxyExpiredWarning` carrying the annotations, at the
