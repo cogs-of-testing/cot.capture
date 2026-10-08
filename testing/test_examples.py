@@ -59,9 +59,22 @@ def _pattern(line: str) -> re.Pattern[str]:
     return re.compile(".*".join(re.escape(part) for part in line.split("...")))
 
 
+# pytest draws separators one column narrower on Windows; compare them by title
+_SEPARATOR = re.compile(r"([=_>-])\1{2,}(?: (.*?) \1+)?")
+
+
+def _normalize(line: str) -> str:
+    line = line.rstrip()
+    match = _SEPARATOR.fullmatch(line)
+    if match is None:
+        return line
+    char, title = match.groups()
+    return f"{char * 3} {title} {char * 3}" if title else char * 3
+
+
 def _check(expected: str, actual: str, *, exact: bool) -> None:
-    wanted = [line.rstrip() for line in expected.splitlines()]
-    lines = [line.rstrip() for line in actual.splitlines()]
+    wanted = [_normalize(line) for line in expected.splitlines()]
+    lines = [_normalize(line) for line in actual.splitlines()]
     if exact:
         assert len(lines) == len(wanted), actual
         for want, line in zip(wanted, lines):
