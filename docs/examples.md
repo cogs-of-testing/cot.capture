@@ -382,8 +382,9 @@ With the binding, the session header says `capture: cot.capture (fd level)`
 
 pytest installs one capture object for the whole session, so a reference
 kept from `test_keep` writes into whichever test runs later, without a word.
-The binding gives each test its own proxy; the late write warns, naming the
-test that owned the proxy, and is written back into the current test.
+The binding gives each test its own proxy, installed before setup and closed
+after teardown; the late write warns, naming the test that owned the proxy
+and that lifetime, and is written back into the current test.
 
 <!-- file: test_kept.py -->
 ```python
@@ -428,7 +429,7 @@ ___________________________________ test_use ___________________________________
 late
 =============================== warnings summary ===============================
 test_kept.py::test_use
-  ...test_kept.py:11: ProxyExpiredWarning: write on closed proxy for sys.stdout owned by 'test_kept.py::test_keep', installed at ...
+  ...test_kept.py:11: ProxyExpiredWarning: write on closed proxy for sys.stdout owned by 'test_kept.py::test_keep', installed before setup, closed after teardown
     kept[0].write("late\n")
 ...
 =========================== short test summary info ============================
@@ -487,17 +488,17 @@ WARNING  demo:test_handler.py:13 from a later test
 from a later test
 =============================== warnings summary ===============================
 test_handler.py::test_later
-  ...logging...: ProxyExpiredWarning: write on closed proxy for sys.stderr owned by 'test_handler.py::test_configure', installed at ...
+  ...logging...: ProxyExpiredWarning: write on closed proxy for sys.stderr owned by 'test_handler.py::test_configure', installed before setup, closed after teardown
     stream.write(msg + self.terminator)
 
 test_handler.py::test_later
-  ...logging...: ProxyExpiredWarning: flush on closed proxy for sys.stderr owned by 'test_handler.py::test_configure', installed at ...
+  ...logging...: ProxyExpiredWarning: flush on closed proxy for sys.stderr owned by 'test_handler.py::test_configure', installed before setup, closed after teardown
     self.stream.flush()
 ...
 =========================== short test summary info ============================
 FAILED test_handler.py::test_later - assert False
 =================== 1 failed, 1 passed, 2 warnings in ...s ====================
-...logging...: ProxyExpiredWarning: flush on closed proxy for sys.stderr owned by 'test_handler.py::test_configure', installed at ...
+...logging...: ProxyExpiredWarning: flush on closed proxy for sys.stderr owned by 'test_handler.py::test_configure', installed before setup, closed after teardown
   self.stream.flush()
 ```
 
@@ -533,7 +534,7 @@ ValueError: I/O operation on closed file.
 ```text
 .                                                                        [100%]
 1 passed in ...s
-...test_atexit.py:7: ProxyExpiredWarning: write on closed proxy for sys.stdout owned by 'test_atexit.py::test_register', installed at ...
+...test_atexit.py:7: ProxyExpiredWarning: write on closed proxy for sys.stdout owned by 'test_atexit.py::test_register', installed before setup, closed after teardown
   atexit.register(lambda: out.write("written at exit\n"))
 written at exit
 ```
@@ -563,7 +564,7 @@ FAILED test_stdin.py::test_read - OSError: pytest: reading from stdin while o...
     def test_read():
 >       input()
 ...
-E           cot.capture._errors.StdinRefusedError: readline from proxy for sys.stdin owned by 'test_stdin.py::test_read', installed at ..., which was given no input
+E           cot.capture._errors.StdinRefusedError: readline from proxy for sys.stdin owned by 'test_stdin.py::test_read', installed before setup, which was given no input
 ...
 FAILED test_stdin.py::test_read - cot.capture._errors.StdinRefusedError: read...
 ```
@@ -717,7 +718,7 @@ E       io.UnsupportedOperation: fileno
 ```text
 capture: cot.capture (slot level)
 ...
-E           io.UnsupportedOperation: fileno() on proxy for sys.stdout owned by 'test_fileno.py::test_fileno', installed at ...: slot-level capture has no descriptor
+E           io.UnsupportedOperation: fileno() on proxy for sys.stdout owned by 'test_fileno.py::test_fileno', installed before setup: slot-level capture has no descriptor
 ```
 
 ### Threads: no difference yet

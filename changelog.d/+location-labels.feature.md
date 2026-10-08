@@ -1,0 +1,1 @@
+Add the `installed` and `closed` arguments to `capture()` and `Scope`: labels a host that drives scopes from its own machinery gives for where in its run they are entered and left, shown instead of a file and line. `Location` gains `label`, its `filename` and `lineno` are `None` for a labelled location, and `str(location)` reads `at FILE:LINE` or the label.

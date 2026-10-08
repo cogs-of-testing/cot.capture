@@ -59,7 +59,9 @@ def pytest_load_initial_conftests(early_config: pytest.Config) -> Generator[None
     early_config.add_cleanup(plugin.close)
     if level is None:
         return (yield)
-    scope = plugin.scope("conftest")
+    scope = plugin.scope(
+        "conftest", installed="before loading conftests", closed="after loading conftests"
+    )
     try:
         with scope:
             return (yield)
@@ -81,7 +83,9 @@ class _Capture:
         self._writer_file: Any = None
         self._terminals: dict[str, TerminalStream] = {}
 
-    def scope(self, name: str) -> Scope:
+    def scope(self, name: str, *, installed: str, closed: str) -> Scope:
+        # The scopes are entered and left from hooks, so a file and line
+        # would name this module; the labels say where in the run instead.
         return capture(
             stdout=self.level,
             stderr=self.level,
@@ -90,6 +94,8 @@ class _Capture:
             # a reference kept past its test warns and reaches the current
             # sys.stdout instead of raising in an unrelated test
             write_back=True,
+            installed=installed,
+            closed=closed,
         )
 
     def close(self) -> None:
@@ -169,7 +175,11 @@ class _Capture:
     ) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
         if self.level is None or not isinstance(collector, pytest.File):
             return (yield)
-        scope = self.scope(f"{collector.nodeid}::collect")
+        scope = self.scope(
+            f"{collector.nodeid}::collect",
+            installed="before collection",
+            closed="after collection",
+        )
         with scope:
             report = yield
         if scope.out:
@@ -185,7 +195,9 @@ class _Capture:
         # One scope for the whole test, split into phases with take(): capsys
         # and capfd save sys.stdout in setup and put it back in teardown, so
         # it must be the same proxy throughout.
-        scope = self._test = self.scope(item.nodeid)
+        scope = self._test = self.scope(
+            item.nodeid, installed="before setup", closed="after teardown"
+        )
         try:
             with scope:
                 return (yield)

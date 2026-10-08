@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import io
 import sys
@@ -39,6 +40,47 @@ def test_annotations_name_owner_slot_and_locations() -> None:
     assert notes.installed.lineno == line
     assert notes.closed is not None
     assert notes.closed.monotonic >= notes.installed.monotonic
+
+
+def test_locations_skip_contextlib_to_the_code_that_entered() -> None:
+    """A scope entered and left through an ``ExitStack`` names the stack's user."""
+    start = sys._getframe().f_lineno + 1
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(capture(name="stacked"))
+        kept = sys.stdout
+    assert isinstance(kept, StreamProxy)
+    notes = kept.annotations
+    assert (notes.installed.filename, notes.installed.lineno) == (__file__, start + 1)
+    assert notes.closed is not None
+    # the line Python reports for leaving a with block differs between versions
+    assert notes.closed.filename == __file__
+    assert notes.closed.lineno in range(start, start + 3)
+
+
+def test_describe_names_file_and_line() -> None:
+    kept, line = _misplace()
+    assert kept.annotations.describe() == (
+        f"proxy for sys.stdout owned by 'kept', installed at {__file__}:{line}, "
+        f"closed at {__file__}:{line}"
+    )
+
+
+def test_a_host_labels_where_its_scope_lived() -> None:
+    """A host entering scopes from its own machinery says where in its run."""
+    kept, _ = _misplace(installed="before setup", closed="after teardown")
+    notes = kept.annotations
+    assert notes.installed.filename is None
+    assert notes.installed.label == "before setup"
+    assert notes.closed is not None
+    assert notes.closed.monotonic >= notes.installed.monotonic
+    expected = (
+        "write on closed proxy for sys.stdout owned by 'kept', "
+        "installed before setup, closed after teardown"
+    )
+    with pytest.warns(ProxyExpiredWarning) as record:
+        with pytest.raises(ProxyExpiredError):
+            kept.write("late")
+    assert str(record[0].message) == expected
 
 
 def test_use_after_lifetime_warns_then_raises() -> None:

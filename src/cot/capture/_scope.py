@@ -87,6 +87,13 @@ class Scope:
     the scope ended, instead of raising. ``files`` are the capture files
     descriptor-level capture appends to; without them each borrow creates
     and deletes its own.
+
+    The proxies record where they were installed and closed: the code that
+    entered and left the scope, past ``contextlib`` and cot.capture itself.
+    A host that enters and leaves scopes from its own machinery, where that
+    code is the host's and names nothing useful, passes ``installed`` and
+    ``closed`` instead: labels saying where in its run that happens, such as
+    ``"before setup"``.
     """
 
     def __init__(
@@ -98,12 +105,15 @@ class Scope:
         name: str | None = None,
         write_back: bool = False,
         files: CaptureFiles | None = None,
+        installed: str | None = None,
+        closed: str | None = None,
     ) -> None:
         self.name = name or f"scope-{id(self):x}"
         self._levels: dict[str, Level | None] = {"stdout": stdout, "stderr": stderr}
         self._stdin = stdin
         self._write_back = write_back
         self._files = files
+        self._labels = {"installed": installed, "closed": closed}
         self._installed: list[_Installed] = []
         self._captured: dict[str, str] = {}
         self.diagnostics: list[ForeignReplacement] = []
@@ -162,8 +172,13 @@ class Scope:
                 return item.proxy
         raise KeyError(slot)
 
+    def _where(self, event: str) -> Location:
+        label = self._labels[event]
+        # depth 2: the caller of __enter__ or __exit__
+        return Location.here(2) if label is None else Location.described(label)
+
     def __enter__(self) -> Scope:
-        here = Location.here(1)
+        here = self._where("installed")
         try:
             for slot, level in self._levels.items():
                 if level is not None:
@@ -226,7 +241,7 @@ class Scope:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        here = Location.here(1)
+        here = self._where("closed")
         while self._installed:
             item = self._installed.pop()
             current = getattr(sys, item.slot)
@@ -271,6 +286,8 @@ def capture(
     name: str | None = None,
     write_back: bool = False,
     files: CaptureFiles | None = None,
+    installed: str | None = None,
+    closed: str | None = None,
 ) -> Scope:
     """Create a :class:`Scope`; use it as a context manager."""
     return Scope(
@@ -280,4 +297,6 @@ def capture(
         name=name,
         write_back=write_back,
         files=files,
+        installed=installed,
+        closed=closed,
     )

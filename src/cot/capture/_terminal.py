@@ -59,9 +59,9 @@ class TerminalStream(io.TextIOBase):
                 )
 
     def describe(self) -> str:
-        text = f"terminal {self._name} owned by {self.owner!r}, created at {self.created}"
+        text = f"terminal {self._name} owned by {self.owner!r}, created {self.created}"
         if self.closed_at is not None:
-            text += f", closed at {self.closed_at}"
+            text += f", closed {self.closed_at}"
         return text
 
     # -- writing ------------------------------------------------------------
@@ -208,4 +208,4 @@ def terminal(name: Stream, *, owner: str | None = None) -> TerminalStream:
     stream (or use it as a context manager) to release it.
     """
     created = Location.here(1)
-    return TerminalStream(name, owner or f"{created}", created)
+    return TerminalStream(name, owner or f"{created.filename}:{created.lineno}", created)
