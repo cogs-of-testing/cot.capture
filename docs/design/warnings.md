@@ -127,21 +127,33 @@ on a context-aware build and process-wide otherwise.
 scope's lifetime, and a thread's own `catch_warnings` can undo them, the same
 as in pytest today (2.4). The core does not try to fix the stdlib.
 
+### WD3
+
+**Garbage collection follows a policy the host chooses.** Unraisable
+exceptions from finalizers only appear when the garbage is collected, so when
+collection runs decides which scope they land in. A scope takes a
+`GCPolicy`: how many `gc.collect()` passes to run, and at which points (the
+end of the scope, each `take()`). The core default is no collection.
+
+pytest collects at session end only (1 pass on CPython, 5 on PyPy, #14441;
+`unraisableexception.py`), and reads unraisable exceptions after each test
+phase without collecting. A test's cycles are therefore reported in a later
+test, or at session end.
+
+*Cost:* without collection in the policy, a finalizer's exception is
+attributed to whichever scope is current when the garbage collector happens
+to run. With collection, every scope end pays for a full collection.
+
 ## Open questions
 
-1. **Garbage collection at the end of a scope.** pytest runs `gc.collect()`
-   before it reads unraisable exceptions (5 times on PyPy, `#14441`), so that
-   finalizers run inside the test that created the garbage. Should the scope
-   do this when it ends (it costs time on every scope), should the host ask
-   for it, or should the scope not do it at all?
+1. **The pytest binding's default `GCPolicy`.** It could match pytest
+   (session end only), or collect at the end of each test so that unraisable
+   exceptions are attributed to the test that made the garbage.
 2. **`recwarn`, `pytest.warns` and `pytest.deprecated_call`.** Leave them on
    pytest's nested `catch_warnings` (W2 makes them invisible to the scope,
    as today), or rebuild them on scopes so they gain WD1's behaviour on
    threads?
-3. **Where the pytest binding lives.** cot.capture already has the opt-in
-   binding `cot.capture.overtake_pytest`, which cot.pytest switches on. Does
-   the warnings binding go there too, or into cot.pytest as the glue?
-4. **Taking the plugin name `warnings`.** pytest core wraps
+3. **Taking the plugin name `warnings`.** pytest core wraps
    `pytest_configure` in a process-global `catch_warnings` only if a plugin
    named `warnings` is registered
    ([replacement research 4.3](../research-pytest-replacement.md#43-warnings-warnings-and-recwarn)).
@@ -151,8 +163,17 @@ as in pytest today (2.4). The core does not try to fix the stdlib.
 
 ## The pytest binding
 
-This is host policy, not core. To replace pytest's `warnings`,
-`unraisableexception` and `threadexception` plugins, the binding:
+This is host policy, not core. It is split in two (Ronny, 2026-10-08):
+
+- **cot.capture** ships the pytest parts of its own capture, in
+  `cot.capture.overtake_pytest`: the scopes per test, the hooks and the
+  fixtures below. They work on their own with `-p`.
+- **cot.pytest** is the glue. It switches the parts on, and it owns
+  everything that spans more than one cot package, such as the order in
+  which parts are set up and the header line.
+
+To replace pytest's `warnings`, `unraisableexception` and `threadexception`
+plugins, the cot.capture part:
 
 - runs one scope per test, split with `take()` at the end of setup, call
   and teardown (W8), plus scopes for configure, collection and session
@@ -166,7 +187,8 @@ This is host policy, not core. To replace pytest's `warnings`,
   pytest-reportlog keep working;
 - issues `PytestUnraisableExceptionWarning` and
   `PytestUnhandledThreadExceptionWarning` from the other two record kinds
-  (W5), so `-W error` turns them into failures as it does today.
+  (W5), so `-W error` turns them into failures as it does today;
+- sets the scopes' `GCPolicy` (WD3).
 
 ## Appendix: probe
 
