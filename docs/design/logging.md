@@ -123,20 +123,27 @@ state. A formatting error surfaces at read time, in the reader. Records keep
 their `exc_info`, and with it the traceback's frames, alive as long as the
 scope's records are kept.
 
+### LD3
+
+**What a scope keeps is decided by a discard policy.** The scope hands each
+batch of records to a `DiscardPolicy` when the batch is complete: at
+`take()` and at the end of the scope. The policy is told what the host knows
+about the batch, and decides whether the records are kept or thrown away.
+For example, a pytest binding can drop the records of a passing phase that
+nobody asked for, and keep everything when the phase failed. The core
+default keeps everything. A policy can also cap how many records a batch
+holds (#8307, #9215).
+
+*Cost:* records that were thrown away are gone. A report can't show them,
+and a `caplog` read after the decision finds nothing. The decision is made
+per batch, so the memory a single long phase uses is bounded only by a cap.
+
 ## Open questions
 
-1. **Bounding memory.** Keep every record, as pytest does, or let the scope
-   take a limit (`max_records=`, oldest dropped and counted) for #8307 and
-   #9215?
-2. **Options through cot.config.ingest.** Should the binding declare its
-   `--log-*` and `log_*` options through cot.config.ingest? That project's
-   acceptance test already declares exactly these options.
-3. **Taking the plugin name `logging-plugin`.** pytest's `subtests` looks up
-   `logging-plugin` to read `log_level` and uses `_pytest.logging.catching_logs`
-   directly
-   ([replacement research 4.2](../research-pytest-replacement.md#42-logging-logging)).
-   Should the binding register under that name, or leave subtests on
-   pytest's own handler?
+1. **pytest's more recent logging PR.** The attachment in L2 follows #3697.
+   There is a more recent pytest PR with more detailed logging handling
+   (Ronny, 2026-10-08), and this design should follow it once it has been
+   read.
 
 ## The pytest binding
 
@@ -157,4 +164,12 @@ To replace pytest's `logging` plugin, the cot.capture part:
   `log_date_format` when formatting;
 - adds `log_cli` as a handler on a terminal stream (L8), and `log_file` as a
   plain `FileHandler` for the session;
-- re-registers the `--log-*` options and `log_*` ini keys, and `--log-disable`.
+- declares the `--log-*` options, the `log_*` ini keys and `--log-disable`
+  through cot.config.ingest, whose acceptance test already models exactly
+  this set;
+- sets the scopes' `DiscardPolicy` (LD3).
+
+cot.pytest provides replacement objects wherever pytest or a plugin looks up
+the old plugin by name, for example `logging-plugin`, which `subtests` reads
+for `log_level`
+([replacement research 4.2](../research-pytest-replacement.md#42-logging-logging)).
