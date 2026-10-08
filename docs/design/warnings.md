@@ -149,17 +149,15 @@ to run. With collection, every scope end pays for a full collection.
 1. **The pytest binding's default `GCPolicy`.** It could match pytest
    (session end only), or collect at the end of each test so that unraisable
    exceptions are attributed to the test that made the garbage.
-2. **Filters and the future warnings package.** General warning filtering
-   and interaction will get a package of its own (Ronny, 2026-10-08). Do the
-   scope's `filters=` (W1, WD2) and the binding's handling of `-W` and
-   `filterwarnings` move there too, with cot.capture only recording?
 
-## Not here
+## Follow-up: a package for warning filtering
 
-`recwarn`, `pytest.warns` and `pytest.deprecated_call` need their own
-planning. They move once general warning filtering and interaction has its
-own package (Ronny, 2026-10-08). Until then they stay on pytest's nested
-`catch_warnings`, and W2 describes how they interact with a scope.
+General warning filtering and interaction moves to a package of its own, as
+a follow-up (Ronny, 2026-10-08). The scope's `filters=` (W1, WD2) and the
+binding's handling of `-W` and `filterwarnings` stay here until then.
+`recwarn`, `pytest.warns` and `pytest.deprecated_call` move with it. Until
+then they stay on pytest's nested `catch_warnings`, and W2 describes how
+they interact with a scope.
 
 ## The pytest binding
 
