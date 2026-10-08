@@ -49,8 +49,15 @@ proxies do ([Scopes](streams.md#scopes)). The router is annotated like a proxy
 reports a `ForeignReplacement` (O4); `logging.config.dictConfig` with
 `disable_existing_loggers` or a reset of the root handlers does this.
 
-**L3. Records, not text.** A scope keeps the `LogRecord`s it captured. How
-they are formatted is up to the host. A record already carries its thread name
+The router is a handler. It is attached the way pytest does it since #3697
+(pytest 9.1): to the root logger, and to every logger that is non-propagating
+at that moment, since their records never reach the root. Each scope entry
+scans again and attaches to loggers that have turned non-propagating since,
+so only a logger that turns non-propagating while a scope is active is
+missed. Because it is a handler, the loggers' own filters apply as usual.
+
+**L3. Records, not text.** A scope keeps the `LogRecord`s it captured and
+nothing else ([LD2](#ld2)). How they are formatted is up to the host. A record already carries its thread name
 and time, so records from several threads stay distinguishable after the fact
 (this differs from streams, [D3](streams.md#d3)).
 
@@ -98,36 +105,33 @@ Doing that silently changes what the code under test logs everywhere else
 levels. A test that wants `DEBUG` records asks for them with `levels=` (L4).
 A pytest binding that keeps `log_level` working does the same per test.
 
+### LD2
+
+**The router stores records only; it never writes to a stream.** pytest's
+`LogCaptureHandler` is a `StreamHandler` over a `StringIO`. It formats every
+record into the text buffer as it arrives, and also keeps the record. The
+router appends the record and stops there. Text (the report section,
+`caplog.text`) is formatted from the records when someone reads it
+(Ronny, 2026-10-08).
+
+That removes the formatting cost of records nobody reads, keeps one copy
+instead of two, and lets the reader pick the format.
+
+*Cost:* a record is formatted when it is read, not when it is logged. If an
+argument is a mutable object that changes later, the text shows the later
+state. A formatting error surfaces at read time, in the reader. Records keep
+their `exc_info`, and with it the traceback's frames, alive as long as the
+scope's records are kept.
+
 ## Open questions
 
-1. **How the router sees records.** All three options were *probed* on
-   3.13.16 with a non-propagating logger, a logger whose filter rejects the
-   record, and a record below its logger's level:
-   - **a handler on the root logger** (pytest's way): misses non-propagating
-     loggers unless the handler is also attached to each of them, and still
-     misses loggers that turn non-propagating later (#7335). It respects
-     logger filters.
-   - **the record factory**: sees the non-propagating logger's record, but
-     also the record the logger's filter rejects, because the factory runs
-     before `Logger.handle`. `extra=` fields are not set yet when it runs.
-     It is a single global slot.
-   - **wrapping `Logger.handle` or `callHandlers`** on the `Logger` class:
-     sees every record after the logger's filters, whatever its propagation,
-     but it patches a stdlib class, and loggers made by
-     `logging.setLoggerClass` with their own `handle` escape it.
-   Below-level records reach none of them.
-   I lean to the root handler plus attaching it to non-propagating loggers
-   at entry, as pytest does. It is the only option that patches nothing, and
-   #7335 then stays a known gap.
-2. **Bounding memory.** Keep every record, as pytest does, or let the scope
+1. **Bounding memory.** Keep every record, as pytest does, or let the scope
    take a limit (`max_records=`, oldest dropped and counted) for #8307 and
    #9215?
-3. **Where the pytest binding lives.** This is the same question as in
-   [warnings.md](warnings.md#open-questions). Does it go in
-   `cot.capture.overtake_pytest`, or in cot.pytest as the glue? And does it
-   declare its `--log-*` and `log_*` options through cot.config.ingest? That
-   project's acceptance test already declares exactly these options.
-4. **Taking the plugin name `logging-plugin`.** pytest's `subtests` looks up
+2. **Options through cot.config.ingest.** Should the binding declare its
+   `--log-*` and `log_*` options through cot.config.ingest? That project's
+   acceptance test already declares exactly these options.
+3. **Taking the plugin name `logging-plugin`.** pytest's `subtests` looks up
    `logging-plugin` to read `log_level` and uses `_pytest.logging.catching_logs`
    directly
    ([replacement research 4.2](../research-pytest-replacement.md#42-logging-logging)).
@@ -136,8 +140,12 @@ A pytest binding that keeps `log_level` working does the same per test.
 
 ## The pytest binding
 
-This is host policy, not core. To replace pytest's `logging` plugin, the
-binding:
+This is host policy, not core. It is split in two, as in
+[warnings.md](warnings.md#the-pytest-binding): cot.capture ships the pytest
+parts of its own capture in `cot.capture.overtake_pytest`, and cot.pytest is
+the glue that switches the parts on and owns what spans several cot packages.
+
+To replace pytest's `logging` plugin, the cot.capture part:
 
 - runs one scope per test, split with `take()` (L7), and adds a `log` report
   section per phase with `item.add_report_section`;
