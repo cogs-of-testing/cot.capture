@@ -2,6 +2,12 @@
 
 <!-- towncrier release notes start -->
 
+## 0.1.1 (2026-10-07)
+
+### Fixed
+
+- Under the pytest binding, `capsys.disabled()` reaches the terminal: `sys.stdout` and `sys.stderr` point at terminal streams inside it. It was captured into the test's report instead. `os.write` to descriptors 1 and 2 inside it stays captured under fd capture.
+
 ## 0.1.0 (2026-10-07)
 
 ### Added
