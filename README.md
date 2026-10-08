@@ -23,3 +23,10 @@ addopts = -p cot.capture.overtake_pytest
 level; `-s` captures nothing; `tee-sys` is left to pytest. `capsys`, `capfd`
 and pytest's `capturemanager` keep working. The module docstring lists what
 differs from pytest's own capture.
+
+## Examples
+
+[docs/examples.md](docs/examples.md) shows the intent with worked examples:
+the library used directly, and the same tests run under pytest's builtin
+capture and under the binding, with their real output. `testing/test_examples.py`
+runs every example on that page, so the output shown is what the code does.
