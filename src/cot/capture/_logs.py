@@ -123,6 +123,9 @@ class LogScope:
     (``""`` for the root) to levels set for the scope's lifetime and put
     back afterwards (L4); ``threshold`` only filters what the scope keeps.
     ``discard`` decides which batches of records are kept (LD3).
+    ``handlers`` are the host's own outputs (L8): each record the scope
+    receives is handed to them, before the threshold, with their own levels
+    and filters applying; this reaches them for non-propagating loggers too.
 
     Like :class:`Scope`, it takes ``installed`` and ``closed`` labels for a
     host that enters and leaves it from its own machinery.
@@ -134,6 +137,7 @@ class LogScope:
         levels: Mapping[str, LevelSpec] | None = None,
         threshold: LevelSpec = logging.NOTSET,
         discard: DiscardPolicy = KEEP_ALL,
+        handlers: Sequence[logging.Handler] = (),
         name: str | None = None,
         installed: str | None = None,
         closed: str | None = None,
@@ -142,6 +146,7 @@ class LogScope:
         self._levels = {n: _level(v) for n, v in (levels or {}).items()}
         self._threshold = _level(threshold)
         self._discard = discard
+        self._handlers = tuple(handlers)
         self._labels = {"installed": installed, "closed": closed}
         self._lock = threading.Lock()
         self._batch: list[logging.LogRecord] = []
@@ -175,6 +180,9 @@ class LogScope:
         return batch if self._discard.decide(batch, facts) else []
 
     def _add(self, record: logging.LogRecord) -> None:
+        for handler in self._handlers:
+            if record.levelno >= handler.level:
+                handler.handle(record)
         if record.levelno < self._threshold:
             return
         with self._lock:
@@ -274,6 +282,7 @@ def capture_logs(
     levels: Mapping[str, LevelSpec] | None = None,
     threshold: LevelSpec = logging.NOTSET,
     discard: DiscardPolicy = KEEP_ALL,
+    handlers: Sequence[logging.Handler] = (),
     name: str | None = None,
     installed: str | None = None,
     closed: str | None = None,
@@ -283,6 +292,7 @@ def capture_logs(
         levels=levels,
         threshold=threshold,
         discard=discard,
+        handlers=handlers,
         name=name,
         installed=installed,
         closed=closed,

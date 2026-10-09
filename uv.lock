@@ -83,8 +83,15 @@ wheels = [
 name = "cot-capture"
 source = { editable = "." }
 
+[package.optional-dependencies]
+pytest = [
+    { name = "cot-config" },
+    { name = "pytest" },
+]
+
 [package.dev-dependencies]
 test = [
+    { name = "cot-config" },
     { name = "pytest" },
 ]
 typing = [
@@ -92,17 +99,34 @@ typing = [
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "cot-config", marker = "extra == 'pytest'", git = "https://github.com/cogs-of-testing/cot.config.ingest?branch=claude%2Fproject-thread-5pb2dc" },
+    { name = "pytest", marker = "extra == 'pytest'", specifier = ">=9" },
+]
+provides-extras = ["pytest"]
 
 [package.metadata.requires-dev]
-test = [{ name = "pytest", specifier = ">=9" }]
+test = [
+    { name = "cot-config", git = "https://github.com/cogs-of-testing/cot.config.ingest?branch=claude%2Fproject-thread-5pb2dc" },
+    { name = "pytest", specifier = ">=9" },
+]
 typing = [{ name = "mypy", specifier = ">=1" }]
+
+[[package]]
+name = "cot-config"
+version = "0.3.0.dev1+g4c7036485"
+source = { git = "https://github.com/cogs-of-testing/cot.config.ingest?branch=claude%2Fproject-thread-5pb2dc#4c7036485850232fc2acb75dcbf3c89c87a4c5bd" }
+dependencies = [
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions" },
+]
 
 [[package]]
 name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [

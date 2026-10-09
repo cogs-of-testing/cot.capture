@@ -244,3 +244,26 @@ def test_router_filters_apply_once_through_a_stand_in() -> None:
         assert messages(scope.records) == ["np", "root"]
     finally:
         log.propagate = True
+
+
+def test_host_handlers_get_every_record_with_their_own_level() -> None:
+    seen: list[str] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            seen.append(record.getMessage())
+
+    handler = Collect(logging.INFO)
+    log = logging.getLogger("t.handlers")
+    log.propagate = False
+    log.setLevel(logging.DEBUG)
+    try:
+        with capture_logs(handlers=[handler], threshold="ERROR") as scope:
+            log.debug("debug")
+            log.info("info")
+            log.error("error")
+        assert seen == ["info", "error"]
+        assert messages(scope.records) == ["error"]
+    finally:
+        log.propagate = True
+        log.setLevel(logging.NOTSET)

@@ -1,0 +1,1 @@
+Added `cot.capture.overtake_pytest_logging`, an opt-in pytest plugin replacing pytest's `logging` plugin: per-phase log report sections, `caplog`, live logging and `log_file`, with the `log_*` options read through cot.config.ingest (new `pytest` extra). `LogScope` takes `handlers=` for host outputs.

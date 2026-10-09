@@ -25,6 +25,12 @@ level; `-s` captures nothing; `tee-sys` is left to pytest. `capsys`, `capfd`
 and pytest's `capturemanager` keep working. The module docstring lists what
 differs from pytest's own capture.
 
+`cot.capture.overtake_pytest_logging` replaces pytest's `logging` plugin in
+the same way (`-p cot.capture.overtake_pytest_logging`, needs the `pytest`
+extra): report sections, `caplog`, live logging and `log_file` keep working,
+records are kept instead of text, and the `log_*` options are read through
+cot.config.ingest.
+
 ## Examples
 
 [docs/examples.md](docs/examples.md) shows the intent with worked examples:

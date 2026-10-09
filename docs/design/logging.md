@@ -101,8 +101,11 @@ scopes. That also covers teardown records when a fixture raises (#12203),
 because the scope stays in force until the test's last part ends.
 
 **L8. Live output is the host's handler on a terminal stream.** A host that
-shows records while a scope is active (pytest's `log_cli`) adds its own
-handler writing to a [terminal stream](streams.md#terminal-streams). Nothing is
+shows records while a scope is active (pytest's `log_cli`) passes its own
+handler to the scope (`handlers=`), which hands it every record the scope
+receives, with the handler's own level and filters, so it also sees
+non-propagating loggers. The handler writes to a
+[terminal stream](streams.md#terminal-streams). Nothing is
 suspended ([D9](streams.md#d9)), so live logging does not touch `sys.stdout`
 (#10553) and is not captured.
 
@@ -173,8 +176,9 @@ logs.diagnostics   # ForeignReplacement for a level changed or a router removed
 
 This is host policy, not core. It is split in two, as in
 [warnings.md](warnings.md#the-pytest-binding): cot.capture ships the pytest
-parts of its own capture in `cot.capture.overtake_pytest`, and cot.pytest is
-the glue that switches the parts on and owns what spans several cot packages.
+parts of its own capture in `cot.capture.overtake_pytest_logging`, and
+cot.pytest is the glue that switches the parts on and owns what spans several
+cot packages.
 
 To replace pytest's `logging` plugin, the cot.capture part:
 
@@ -190,7 +194,9 @@ To replace pytest's `logging` plugin, the cot.capture part:
   plain `FileHandler` for the session;
 - declares the `--log-*` options, the `log_*` ini keys and `--log-disable`
   through cot.config.ingest, whose acceptance test already models exactly
-  this set;
+  this set. pytest imports its logging plugin, and declares those options,
+  before any `-p` plugin loads, so the binding adopts them
+  (`add_config(..., adopt=True)`, cot.config.ingest P9);
 - sets the scopes' `DiscardPolicy` (LD3).
 
 cot.pytest provides replacement objects wherever pytest or a plugin looks up
