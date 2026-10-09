@@ -41,8 +41,8 @@ build.targets.wheel.sources = [ "src" ]
 
 [tool.uv]
 default-groups = [ "test", "typing" ]
-# until cot.config.ingest#21 (add_config(..., adopt=True)) is released
-sources.cot-config = { git = "https://github.com/cogs-of-testing/cot.config.ingest", branch = "claude/project-thread-5pb2dc" }
+# until a cot-config release carries add_config(..., adopt=True) (#21, merged)
+sources.cot-config = { git = "https://github.com/cogs-of-testing/cot.config.ingest", branch = "main" }
 
 [tool.pytest]
 ini_options.testpaths = [ "testing" ]

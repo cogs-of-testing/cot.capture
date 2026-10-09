@@ -100,22 +100,22 @@ typing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cot-config", marker = "extra == 'pytest'", git = "https://github.com/cogs-of-testing/cot.config.ingest?branch=claude%2Fproject-thread-5pb2dc" },
+    { name = "cot-config", marker = "extra == 'pytest'", git = "https://github.com/cogs-of-testing/cot.config.ingest?branch=main" },
     { name = "pytest", marker = "extra == 'pytest'", specifier = ">=9" },
 ]
 provides-extras = ["pytest"]
 
 [package.metadata.requires-dev]
 test = [
-    { name = "cot-config", git = "https://github.com/cogs-of-testing/cot.config.ingest?branch=claude%2Fproject-thread-5pb2dc" },
+    { name = "cot-config", git = "https://github.com/cogs-of-testing/cot.config.ingest?branch=main" },
     { name = "pytest", specifier = ">=9" },
 ]
 typing = [{ name = "mypy", specifier = ">=1" }]
 
 [[package]]
 name = "cot-config"
-version = "0.3.0.dev1+g4c7036485"
-source = { git = "https://github.com/cogs-of-testing/cot.config.ingest?branch=claude%2Fproject-thread-5pb2dc#4c7036485850232fc2acb75dcbf3c89c87a4c5bd" }
+version = "0.3.0.dev2+g55895e223"
+source = { git = "https://github.com/cogs-of-testing/cot.config.ingest?branch=main#55895e2239a1d55ed4c9fc0527b66f48c701d583" }
 dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typing-extensions" },

@@ -13,10 +13,10 @@ repos:
     - id: mypy
       # checks what [tool.mypy] names, not the staged files alone
       pass_filenames: false
-      # cot-config from git until cot.config.ingest#21 is released
+      # cot-config from git until a cot-config release carries #21
       additional_dependencies:
         - pytest
-        - "cot-config @ git+https://github.com/cogs-of-testing/cot.config.ingest@claude/project-thread-5pb2dc"
+        - "cot-config @ git+https://github.com/cogs-of-testing/cot.config.ingest@main"
 
 - repo: https://github.com/zizmorcore/zizmor-pre-commit
   rev: v1.30.1
