@@ -3,8 +3,7 @@
 How a scope records warnings, exceptions that Python cannot raise
 (`sys.unraisablehook`) and exceptions that end a thread
 (`threading.excepthook`). Issue #6. This is a design draft. The pull request
-that carries it grows into the implementation, and the
-[open questions](#open-questions) must be settled before the code is written.
+that carries it grows into the implementation.
 Section numbers in brackets point into [the research](../research.md). Rules
 O1 to O9 and decisions D1 to D12 are in [streams.md](streams.md).
 
