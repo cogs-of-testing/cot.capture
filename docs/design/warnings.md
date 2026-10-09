@@ -144,12 +144,6 @@ test, or at session end.
 attributed to whichever scope is current when the garbage collector happens
 to run. With collection, every scope end pays for a full collection.
 
-## Open questions
-
-1. **The pytest binding's default `GCPolicy`.** It could match pytest
-   (session end only), or collect at the end of each test so that unraisable
-   exceptions are attributed to the test that made the garbage.
-
 ## Follow-up: a package for warning filtering
 
 General warning filtering and interaction moves to a package of its own, as
@@ -186,7 +180,10 @@ plugins, the cot.capture part:
 - issues `PytestUnraisableExceptionWarning` and
   `PytestUnhandledThreadExceptionWarning` from the other two record kinds
   (W5), so `-W error` turns them into failures as it does today;
-- sets the scopes' `GCPolicy` (WD3).
+- sets the scopes' `GCPolicy` (WD3). The starting default collects at the
+  end of every test, so unraisable exceptions are attributed to the test
+  that made the garbage (Ronny, 2026-10-09). Grouping collection by default,
+  so projects without leaks don't pay for it on every test, is #11.
 
 cot.pytest provides replacement objects wherever pytest or a plugin looks up
 the old plugin by name. One example is `warnings`: pytest core wraps
