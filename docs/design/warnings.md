@@ -173,7 +173,8 @@ This is host policy, not core. It is split in two (Ronny, 2026-10-08):
   which parts are set up and the header line.
 
 To replace pytest's `warnings`, `unraisableexception` and `threadexception`
-plugins, the cot.capture part:
+plugins, the cot.capture part, `-p cot.capture.overtake_pytest_warnings`,
+blocks those three plugins and:
 
 - runs one scope per test, split with `take()` at the end of setup, call
   and teardown (W8), plus scopes for configure, collection and session

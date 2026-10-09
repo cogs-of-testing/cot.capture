@@ -1,0 +1,1 @@
+Add the opt-in pytest binding `-p cot.capture.overtake_pytest_warnings`. It replaces pytest's `warnings`, `unraisableexception` and `threadexception` plugins with recordings, keeps pytest's filters and the `pytest_warning_recorded` hook, and collects garbage at the end of every test, so a finalizer's error is reported in the test that made the garbage.

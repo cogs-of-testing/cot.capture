@@ -25,6 +25,14 @@ level; `-s` captures nothing; `tee-sys` is left to pytest. `capsys`, `capfd`
 and pytest's `capturemanager` keep working. The module docstring lists what
 differs from pytest's own capture.
 
+`cot.capture.overtake_pytest_warnings` does the same for warnings,
+unraisable exceptions and exceptions in threads (`-p
+cot.capture.overtake_pytest_warnings`), replacing pytest's `warnings`,
+`unraisableexception` and `threadexception` plugins. pytest's filters and
+the warnings summary stay as they are; garbage is collected at the end of
+every test, so a finalizer's error is reported in the test that caused it.
+The design is [docs/design/warnings.md](docs/design/warnings.md).
+
 ## Examples
 
 [docs/examples.md](docs/examples.md) shows the intent with worked examples:

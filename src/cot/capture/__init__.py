@@ -24,6 +24,7 @@ from ._records import (
     Recording,
     ThreadExceptionRecord,
     UnraisableRecord,
+    WarningFilter,
     WarningRecord,
     record,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "TerminalStream",
     "ThreadExceptionRecord",
     "UnraisableRecord",
+    "WarningFilter",
     "WarningRecord",
     "borrow",
     "capture",

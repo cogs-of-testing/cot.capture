@@ -67,6 +67,12 @@ class ThreadExceptionRecord:
 
 Record = Union[WarningRecord, UnraisableRecord, ThreadExceptionRecord]
 
+_Action = Literal["default", "error", "ignore", "always", "module", "once"]
+
+#: A parsed warning filter, as ``warnings.filterwarnings`` takes it: action,
+#: message regular expression, category, module regular expression, line.
+WarningFilter = tuple[_Action, str, type[Warning], str, int]
+
 
 @dataclasses.dataclass(frozen=True)
 class GCPolicy:
@@ -198,9 +204,11 @@ class Recording:
 
     Each source is a slot (``warnings.showwarning``, ``sys.unraisablehook``,
     ``threading.excepthook``) that the recording puts a recorder in and
-    restores when it ends (W2). ``filters`` are warning filters in the
-    ``-W`` syntax (``action:message:category:module:lineno``), applied on top
-    of the current ones for the recording's lifetime (W1); without them the
+    restores when it ends (W2). ``filters`` are warning filters applied on
+    top of the current ones for the recording's lifetime, in order, so a
+    later one wins (W1): strings in the ``-W`` syntax
+    (``action:message:category:module:lineno``, literal text) or parsed
+    :data:`WarningFilter` tuples (regular expressions). Without them the
     recording records whatever the filters in force let through. ``gc`` says
     when the garbage collector runs before records are read (WD3).
 
@@ -214,7 +222,7 @@ class Recording:
         warnings: bool = True,
         unraisable: bool = True,
         thread_exceptions: bool = True,
-        filters: Sequence[str] = (),
+        filters: Sequence[str | WarningFilter] = (),
         gc: GCPolicy = NEVER,
         name: str | None = None,
         installed: str | None = None,
@@ -227,7 +235,7 @@ class Recording:
             "thread_exceptions": thread_exceptions,
         }
         self._sources = [source for source, on in wanted.items() if on]
-        self._filters = [_parse_filter(spec) for spec in filters]
+        self._filters = [_parse_filter(f) if isinstance(f, str) else f for f in filters]
         self._gc = gc
         self._labels = {"installed": installed, "closed": closed}
         self._lock = threading.Lock()
@@ -330,7 +338,7 @@ def record(
     warnings: bool = True,
     unraisable: bool = True,
     thread_exceptions: bool = True,
-    filters: Sequence[str] = (),
+    filters: Sequence[str | WarningFilter] = (),
     gc: GCPolicy = NEVER,
     name: str | None = None,
     installed: str | None = None,
@@ -349,13 +357,12 @@ def record(
     )
 
 
-_Action = Literal["default", "error", "ignore", "always", "module", "once"]
 _ACTIONS: tuple[_Action, ...] = ("default", "always", "ignore", "module", "once", "error")
 
 
 def _parse_filter(
     spec: str,
-) -> tuple[_Action, str, type[Warning], str, int]:
+) -> WarningFilter:
     """One ``-W`` option, as the interpreter reads it.
 
     The message and module fields are literal text, as with ``-W`` (not
