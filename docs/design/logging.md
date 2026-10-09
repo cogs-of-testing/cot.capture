@@ -153,6 +153,22 @@ holds (#8307, #9215).
 and a `caplog` read after the decision finds nothing. The decision is made
 per batch, so the memory a single long phase uses is bounded only by a cap.
 
+## The API
+
+```python
+with capture_logs(levels={"": "DEBUG"}, threshold="INFO",
+                  discard=DiscardPolicy(keep=..., max_records=10_000)) as logs:
+    ...
+    setup = logs.take(passed=True)   # the batch so far, or [] if discarded
+    ...
+logs.records       # the last batch, as the policy decided at the end
+logs.dropped       # records dropped by max_records
+logs.diagnostics   # ForeignReplacement for a level changed or a router removed
+```
+
+`LevelChangedWarning` reports a level changed under the scope (L4);
+`SlotReplacedWarning` a router removed by someone else (L2).
+
 ## The pytest binding
 
 This is host policy, not core. It is split in two, as in

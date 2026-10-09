@@ -19,6 +19,10 @@ class SlotReplacedWarning(CaptureWarning):
     """A scope ended and its slot held an object it did not put there."""
 
 
+class LevelChangedWarning(CaptureWarning):
+    """A log scope ended and a logger's level was not the one it set (L4)."""
+
+
 class ProxyExpiredError(OSError, ValueError):
     """A proxy was used after its scope ended and had nowhere to write back.
 
