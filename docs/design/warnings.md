@@ -29,6 +29,15 @@ a module global
 `_showwarnmsg` looks up the module's `showwarning`, and only the filters and
 the record log are per context).
 
+## The API
+
+`record()` returns a `Recording`, a context manager like a capture
+[scope](streams.md#scopes) but for these three slots. It is separate from
+`capture()`, so a host can record without capturing streams, and the other
+way round. `warnings=`, `unraisable=` and `thread_exceptions=` choose the
+slots, `filters=` and `gc=` are W1 and WD3, and `records` and `take()` work
+like a scope's `out` and `take()`. Below, "scope" means a recording.
+
 ## Rules
 
 **W1. Recording is separate from filtering.** A scope records by putting a
