@@ -15,6 +15,10 @@ class TerminalClosedWarning(CaptureWarning):
     """A terminal stream was used after its owner closed it."""
 
 
+class RecorderExpiredWarning(CaptureWarning):
+    """A recorder was called after the recording that installed it ended."""
+
+
 class SlotReplacedWarning(CaptureWarning):
     """A scope ended and its slot held an object it did not put there."""
 

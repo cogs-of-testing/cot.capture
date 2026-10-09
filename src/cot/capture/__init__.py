@@ -12,11 +12,22 @@ from ._errors import (
     CaptureWarning,
     ProxyExpiredError,
     ProxyExpiredWarning,
+    RecorderExpiredWarning,
     SlotReplacedWarning,
     StdinRefusedError,
     TerminalClosedWarning,
 )
 from ._proxy import StreamProxy
+from ._records import (
+    GCPolicy,
+    Record,
+    Recording,
+    ThreadExceptionRecord,
+    UnraisableRecord,
+    WarningFilter,
+    WarningRecord,
+    record,
+)
 from ._scope import CaptureFiles, ForeignReplacement, Level, Scope, capture, capture_files
 from ._terminal import TerminalStream, terminal
 
@@ -28,20 +39,29 @@ __all__ = [
     "CaptureFiles",
     "CaptureWarning",
     "ForeignReplacement",
+    "GCPolicy",
     "Level",
     "Location",
     "ProxyExpiredError",
     "ProxyExpiredWarning",
+    "Record",
+    "RecorderExpiredWarning",
+    "Recording",
     "Scope",
     "SlotReplacedWarning",
     "StdinRefusedError",
     "StreamProxy",
     "TerminalClosedWarning",
     "TerminalStream",
+    "ThreadExceptionRecord",
+    "UnraisableRecord",
+    "WarningFilter",
+    "WarningRecord",
     "borrow",
     "capture",
     "capture_files",
     "protect",
+    "record",
     "terminal",
     "unprotect",
 ]
