@@ -6,7 +6,7 @@ Enable it per project with::
     addopts = -p cot.capture.overtake_pytest_warnings
 
 It takes over from pytest's ``warnings``, ``unraisableexception`` and
-``threadexception`` plugins, which it blocks, and keeps what they report
+``threadexception`` plugins, which it unregisters, and keeps what they report
 (design docs/design/warnings.md, "The pytest binding"):
 
 - every test runs inside one recording, split at the end of setup, call and
@@ -26,9 +26,9 @@ What differs from pytest: the garbage collector runs at the end of every
 test, so a finalizer's error is reported in the test that made the garbage
 rather than in a later one (WD3; grouping it is issue #11).
 
-``recwarn`` and ``pytest.warns`` are left as they are. Configure-time
-``-W error`` comes from pytest core, which applies it only while a plugin
-named ``warnings`` is registered; cot.pytest provides that replacement.
+``recwarn`` and ``pytest.warns`` are left as they are. The ``warnings``
+plugin is unregistered rather than blocked, because pytest core drops
+``Config.issue_config_time_warning`` while that name is blocked.
 
 This module imports pytest; the rest of cot.capture never does.
 """
@@ -71,7 +71,15 @@ def pytest_addoption(parser: pytest.Parser, pluginmanager: pytest.PytestPluginMa
     # Called as this plugin is registered from -p, before any hook of the
     # plugins it replaces has run.
     for name in _REPLACED:
-        pluginmanager.set_blocked(name)
+        if name == "warnings":
+            # Unregistered, not blocked: pytest core drops configure-time
+            # warnings (Config.issue_config_time_warning) while a plugin
+            # named "warnings" is blocked.
+            plugin = pluginmanager.get_plugin(name)
+            if plugin is not None:
+                pluginmanager.unregister(plugin)
+        else:
+            pluginmanager.set_blocked(name)
 
 
 @pytest.hookimpl(wrapper=True, tryfirst=True)
@@ -81,6 +89,19 @@ def pytest_load_initial_conftests(early_config: pytest.Config) -> Generator[None
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    # As pytest's plugin: the filters apply from configure to unconfigure, so
+    # -W error also covers what no recording below wraps (sessionstart, ...).
+    filters_only = record(
+        warnings=False,
+        unraisable=False,
+        thread_exceptions=False,
+        filters=_filters(config, None),
+        name="pytest configure",
+        installed="pytest_configure",
+        closed="pytest_unconfigure",
+    )
+    filters_only.__enter__()
+    config.add_cleanup(lambda: filters_only.__exit__(None, None, None))
     config.addinivalue_line(
         "markers",
         "filterwarnings(warning): add a warning filter to the given test. "

@@ -164,3 +164,33 @@ def test_collection_warnings_are_recorded(pytester: pytest.Pytester) -> None:
         """
     )
     run(pytester).stdout.fnmatch_lines(["*UserWarning: at import", "*= 1 passed, 1 warning in *"])
+
+
+def test_configure_time_warnings_are_issued(pytester: pytest.Pytester) -> None:
+    # pytest core drops them while a plugin named "warnings" is blocked
+    pytester.makeconftest(
+        """
+        def pytest_configure(config):
+            config.issue_config_time_warning(UserWarning("at configure"), stacklevel=2)
+        """
+    )
+    pytester.makepyfile("def test_ok(): pass")
+    run(pytester).stdout.fnmatch_lines(["*UserWarning: at configure", "*1 passed, 1 warning*"])
+    result = run(pytester, "-W", "error::UserWarning")
+    result.stderr.fnmatch_lines(["*UserWarning: at configure"])
+    assert result.ret != 0
+
+
+def test_filters_apply_between_recordings(pytester: pytest.Pytester) -> None:
+    pytester.makeconftest(
+        """
+        import warnings
+
+        def pytest_sessionstart(session):
+            warnings.warn("at sessionstart", UserWarning)
+        """
+    )
+    pytester.makepyfile("def test_ok(): pass")
+    result = run(pytester, "-W", "error::UserWarning")
+    assert result.ret != 0
+    assert "UserWarning: at sessionstart" in result.stdout.str() + result.stderr.str()

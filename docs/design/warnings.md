@@ -174,7 +174,7 @@ This is host policy, not core. It is split in two (Ronny, 2026-10-08):
 
 To replace pytest's `warnings`, `unraisableexception` and `threadexception`
 plugins, the cot.capture part, `-p cot.capture.overtake_pytest_warnings`,
-blocks those three plugins and:
+unregisters those three plugins and:
 
 - runs one scope per test, split with `take()` at the end of setup, call
   and teardown (W8), plus scopes for configure, collection and session
@@ -194,10 +194,13 @@ blocks those three plugins and:
   that made the garbage (Ronny, 2026-10-09). Grouping collection by default,
   so projects without leaks don't pay for it on every test, is #11.
 
+- applies the same filters from `pytest_configure` to `pytest_unconfigure`,
+  as pytest's plugin does, so `-W error` also covers hooks no scope wraps.
+
+`warnings` is unregistered rather than blocked: pytest core drops
+`Config.issue_config_time_warning` while a plugin of that name is blocked.
 cot.pytest provides replacement objects wherever pytest or a plugin looks up
-the old plugin by name. One example is `warnings`: pytest core wraps
-`pytest_configure` in a process-global `catch_warnings` only if a plugin of
-that name is registered
+the old plugin by name; for these three plugins nothing does
 ([replacement research 4.3](../research-pytest-replacement.md#43-warnings-warnings-and-recwarn)).
 
 ## Appendix: probe
