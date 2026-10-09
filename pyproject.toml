@@ -25,10 +25,11 @@ classifiers = [
   "Typing :: Typed",
 ]
 dynamic = [ "version" ]
+optional-dependencies.pytest = [ "cot-config>=0.2", "pytest>=9" ]
 urls.Source = "https://github.com/cogs-of-testing/cot.capture"
 
 [dependency-groups]
-test = [ "pytest>=9" ]
+test = [ "cot-config>=0.2", "pytest>=9" ]
 typing = [ "mypy>=1" ]
 
 [tool.hatch]
@@ -40,6 +41,8 @@ build.targets.wheel.sources = [ "src" ]
 
 [tool.uv]
 default-groups = [ "test", "typing" ]
+# until a cot-config release carries add_config(..., adopt=True) (#21, merged)
+sources.cot-config = { git = "https://github.com/cogs-of-testing/cot.config.ingest", branch = "main" }
 
 [tool.pytest]
 ini_options.testpaths = [ "testing" ]
